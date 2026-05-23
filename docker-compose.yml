@@ -1,0 +1,59 @@
+services:
+  pubsub:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    command: gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 --project=local-project
+    ports:
+      - "8085:8085"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8085"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  gcs:
+    image: fsouza/fake-gcs-server
+    command:
+      - "-scheme"
+      - "http"
+      - "-port"
+      - "4443"
+      - "-backend"
+      - "filesystem"
+      - "-filesystem-root"
+      - "/storage"
+      - "-public-host"
+      - "localhost:4443"
+    environment:
+      PUBSUB_EMULATOR_HOST: pubsub:8085
+    ports:
+      - "4443:4443"
+    volumes:
+      - ./storage:/storage
+    depends_on:
+      pubsub:
+        condition: service_started
+
+  relay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8099:8099"
+    environment:
+      GCP_RELAY_CONFIG: /config/triggers.example.yaml
+      GCP_RELAY_PORT: "8099"
+    volumes:
+      - ./config/triggers.example.yaml:/config/triggers.example.yaml:ro
+    depends_on:
+      - pubsub
+      - gcs
+
+  echo-function:
+    build:
+      context: ./examples/echo-function
+    ports:
+      - "8080:8080"
+    environment:
+      FUNCTION_TARGET: echo_event
+      FUNCTION_SIGNATURE_TYPE: cloudevent

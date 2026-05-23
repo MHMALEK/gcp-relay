@@ -1,0 +1,11 @@
+project_id: local-project
+
+triggers:
+  - name: gcs-object-finalize
+    source: pubsub
+    topic: gcs-notifications
+    filters:
+      event_type: google.cloud.storage.object.v1.finalized
+    targets:
+      - url: http://echo-function:8080
+        method: POST
