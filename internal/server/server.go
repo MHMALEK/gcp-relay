@@ -1,36 +1,81 @@
 package server
 
 import (
+	"embed"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"strings"
 
+	"github.com/MHMALEK/gcp-relay/internal/history"
 	"github.com/MHMALEK/gcp-relay/internal/router"
 )
 
+//go:embed static/*
+var staticFiles embed.FS
+
 type Server struct {
-	router *router.Router
-	log    *log.Logger
+	router  *router.Router
+	history *history.Store
+	log     *log.Logger
 }
 
-func New(r *router.Router, logger *log.Logger) *Server {
-	return &Server{router: r, log: logger}
+func New(r *router.Router, store *history.Store, logger *log.Logger) *Server {
+	return &Server{router: r, history: store, log: logger}
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.HandleFunc("GET /events", s.handleListEvents)
+	mux.HandleFunc("GET /events/{id}", s.handleGetEvent)
+	mux.HandleFunc("POST /events/{id}/replay", s.handleReplayEvent)
 	mux.HandleFunc("POST /events/gcs", s.handleGCSEvent)
-	mux.HandleFunc("POST /events/pubsub/{topic}", s.handlePubSubPush)
+	mux.HandleFunc("POST /hooks/pubsub/{topic}", s.handlePubSubPush)
+
+	staticFS, _ := fs.Sub(staticFiles, "static")
+	mux.Handle("GET /ui/", http.StripPrefix("/ui/", http.FileServer(http.FS(staticFS))))
+	mux.HandleFunc("GET /ui", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/ui/", http.StatusFound)
+	})
+
 	return mux
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`{"status":"ok"}`))
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleListEvents(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.history.List())
+}
+
+func (s *Server) handleGetEvent(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	rec, ok := s.history.Get(id)
+	if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, rec)
+}
+
+func (s *Server) handleReplayEvent(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	rec, ok := s.history.Get(id)
+	if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	replayed, err := s.router.Replay(r.Context(), rec)
+	if err != nil {
+		s.log.Printf("replay failed id=%s: %v", id, err)
+		writeJSON(w, http.StatusBadGateway, map[string]any{"status": "error", "error": err.Error(), "record": replayed})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"status": "delivered", "record": replayed})
 }
 
 func (s *Server) handleGCSEvent(w http.ResponseWriter, r *http.Request) {
@@ -47,15 +92,14 @@ func (s *Server) handleGCSEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.router.DeliverGCS(r.Context(), body.Bucket, body.Name); err != nil {
+	rec, err := s.router.DeliverGCS(r.Context(), body.Bucket, body.Name)
+	if err != nil {
 		s.log.Printf("gcs delivery failed: %v", err)
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		writeJSON(w, http.StatusBadGateway, map[string]any{"status": "error", "error": err.Error(), "record": rec})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	_, _ = w.Write([]byte(`{"status":"delivered"}`))
+	writeJSON(w, http.StatusAccepted, map[string]any{"status": "delivered", "record": rec})
 }
 
 func (s *Server) handlePubSubPush(w http.ResponseWriter, r *http.Request) {
@@ -71,11 +115,18 @@ func (s *Server) handlePubSubPush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.router.HandlePubSubPush(r.Context(), topic, body); err != nil {
+	rec, err := s.router.HandlePubSubPush(r.Context(), topic, body)
+	if err != nil {
 		s.log.Printf("pubsub delivery failed topic=%s: %v", topic, err)
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		writeJSON(w, http.StatusBadGateway, map[string]any{"status": "error", "error": err.Error(), "record": rec})
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
 }

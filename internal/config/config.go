@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -21,8 +22,11 @@ type Trigger struct {
 }
 
 type Target struct {
+	Type   string `yaml:"type"`
 	URL    string `yaml:"url"`
 	Method string `yaml:"method"`
+	DagID  string `yaml:"dag_id"`
+	Auth   string `yaml:"auth"`
 }
 
 func Load(path string) (*Config, error) {
@@ -42,8 +46,12 @@ func Load(path string) (*Config, error) {
 
 	for i := range cfg.Triggers {
 		for j := range cfg.Triggers[i].Targets {
-			if cfg.Triggers[i].Targets[j].Method == "" {
-				cfg.Triggers[i].Targets[j].Method = "POST"
+			t := &cfg.Triggers[i].Targets[j]
+			if t.Method == "" {
+				t.Method = "POST"
+			}
+			if t.Type == "" {
+				t.Type = "cloudevent"
 			}
 		}
 	}
@@ -69,4 +77,25 @@ func (c *Config) TriggersForGCS() []Trigger {
 		}
 	}
 	return out
+}
+
+func (t Trigger) MatchesObject(objectName string, eventType string) bool {
+	if !matchesEventType(t.Filters, eventType) {
+		return false
+	}
+	if prefix, ok := t.Filters["object_prefix"]; ok && prefix != "" {
+		return strings.HasPrefix(objectName, prefix)
+	}
+	return true
+}
+
+func matchesEventType(filters map[string]string, eventType string) bool {
+	want, ok := filters["event_type"]
+	if !ok || want == "" {
+		return true
+	}
+	if want == "google.cloud.storage.object.v1.finalized" {
+		return eventType == "OBJECT_FINALIZE" || eventType == want
+	}
+	return want == eventType
 }

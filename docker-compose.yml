@@ -1,18 +1,18 @@
 services:
   pubsub:
-    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
-    command: gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 --project=local-project
+    build:
+      context: ./docker/pubsub
     ports:
       - "8085:8085"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8085"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8085"]
       interval: 5s
       timeout: 3s
-      retries: 10
-      start_period: 10s
+      retries: 15
+      start_period: 20s
 
   gcs:
-    image: fsouza/fake-gcs-server
+    image: fsouza/fake-gcs-server:1.54.0
     command:
       - "-scheme"
       - "http"
@@ -23,7 +23,15 @@ services:
       - "-filesystem-root"
       - "/storage"
       - "-public-host"
-      - "localhost:4443"
+      - "gcs:4443"
+      - "-event.pubsub-project-id"
+      - "local-project"
+      - "-event.pubsub-topic"
+      - "gcs-notifications"
+      - "-event.bucket"
+      - "demo-bucket"
+      - "-event.list"
+      - "finalize"
     environment:
       PUBSUB_EMULATOR_HOST: pubsub:8085
     ports:
@@ -32,7 +40,21 @@ services:
       - ./storage:/storage
     depends_on:
       pubsub:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:4443/_internal/healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  echo-function:
+    build:
+      context: ./examples/echo-function
+    ports:
+      - "8080:8080"
+    environment:
+      FUNCTION_TARGET: echo_event
+      FUNCTION_SIGNATURE_TYPE: cloudevent
 
   relay:
     build:
@@ -46,14 +68,14 @@ services:
     volumes:
       - ./config/triggers.example.yaml:/config/triggers.example.yaml:ro
     depends_on:
-      - pubsub
-      - gcs
-
-  echo-function:
-    build:
-      context: ./examples/echo-function
-    ports:
-      - "8080:8080"
-    environment:
-      FUNCTION_TARGET: echo_event
-      FUNCTION_SIGNATURE_TYPE: cloudevent
+      pubsub:
+        condition: service_healthy
+      gcs:
+        condition: service_healthy
+      echo-function:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8099/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>gcp-relay inspector</title>
+  <style>
+    :root { color-scheme: light dark; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    body { margin: 0; padding: 1.5rem; background: #0b1020; color: #e8eefc; }
+    h1 { font-size: 1.1rem; margin: 0 0 1rem; }
+    .row { display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem; }
+    button { background: #3b82f6; color: white; border: 0; padding: 0.5rem 0.75rem; border-radius: 6px; cursor: pointer; }
+    button.secondary { background: #334155; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #1e293b; vertical-align: top; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #111827; padding: 0.75rem; border-radius: 8px; max-height: 320px; overflow: auto; }
+    .ok { color: #4ade80; } .err { color: #f87171; }
+  </style>
+</head>
+<body>
+  <h1>gcp-relay event inspector</h1>
+  <div class="row">
+    <button onclick="load()">Refresh</button>
+    <button class="secondary" onclick="demo()">Send demo GCS event</button>
+  </div>
+  <table>
+    <thead>
+      <tr><th>Time</th><th>Source</th><th>Object</th><th>Deliveries</th><th></th></tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <h2>Details</h2>
+  <pre id="detail">Select an event</pre>
+  <script>
+    async function load() {
+      const res = await fetch('/events');
+      const events = await res.json();
+      const tbody = document.getElementById('rows');
+      tbody.innerHTML = '';
+      for (const ev of events) {
+        const tr = document.createElement('tr');
+        const status = (ev.deliveries || []).map(d => `${d.target_url}: ${d.status}`).join('\n');
+        tr.innerHTML = `
+          <td>${new Date(ev.timestamp).toLocaleString()}</td>
+          <td>${ev.source}${ev.topic ? ' / ' + ev.topic : ''}</td>
+          <td>gs://${ev.bucket}/${ev.object}</td>
+          <td>${(ev.deliveries || []).map(d => `<span class="${d.status === 'delivered' ? 'ok' : 'err'}">${d.trigger} → ${d.status}</span>`).join('<br>')}</td>
+          <td><button class="secondary" onclick='show(${JSON.stringify(ev.id)})'>View</button>
+              <button onclick='replay(${JSON.stringify(ev.id)})'>Replay</button></td>`;
+        tbody.appendChild(tr);
+      }
+    }
+    async function show(id) {
+      const res = await fetch('/events/' + id);
+      document.getElementById('detail').textContent = JSON.stringify(await res.json(), null, 2);
+    }
+    async function replay(id) {
+      const res = await fetch('/events/' + id + '/replay', { method: 'POST' });
+      document.getElementById('detail').textContent = JSON.stringify(await res.json(), null, 2);
+      load();
+    }
+    async function demo() {
+      await fetch('/events/gcs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bucket: 'demo-bucket', name: 'uploads/hello.txt' })
+      });
+      load();
+    }
+    load();
+    setInterval(load, 5000);
+  </script>
+</body>
+</html>

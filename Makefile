@@ -1,7 +1,10 @@
-.PHONY: build test run tidy up down demo init
+.PHONY: build test run tidy up down demo init install
 
 build:
 	go build -o bin/gcp-relay ./cmd/gcp-relay
+
+install:
+	go install ./cmd/gcp-relay
 
 test:
 	go test ./...
@@ -10,17 +13,16 @@ tidy:
 	go mod tidy
 
 run:
-	go run ./cmd/gcp-relay --config config/triggers.example.yaml --port 8099
+	go run ./cmd/gcp-relay serve --config config/triggers.example.yaml --port 8099
 
 up:
-	docker compose up --build
+	go run ./cmd/gcp-relay up --build
 
 down:
-	docker compose down
+	go run ./cmd/gcp-relay down
 
 init:
-	chmod +x scripts/*.sh
-	./scripts/init-pubsub.sh
+	go run ./cmd/gcp-relay init
 
-demo: init
-	./scripts/demo-upload.sh
+demo:
+	go run ./cmd/gcp-relay demo
