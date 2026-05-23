@@ -11,15 +11,3 @@ triggers:
       - type: cloudevent
         url: http://echo-function:8080
         method: POST
-
-  # Example Airflow / Composer target (uncomment when local Airflow is running):
-  # - name: gcs-to-airflow
-  #   source: pubsub
-  #   topic: gcs-notifications
-  #   filters:
-  #     event_type: google.cloud.storage.object.v1.finalized
-  #   targets:
-  #     - type: airflow
-  #       url: http://host.docker.internal:9000
-  #       dag_id: my_ingestion_dag
-  #       auth: admin:admin

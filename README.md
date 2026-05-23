@@ -80,12 +80,6 @@ triggers:
     targets:
       - type: cloudevent
         url: http://echo-function:8080
-
-      # Airflow / Composer DAG trigger:
-      - type: airflow
-        url: http://host.docker.internal:9000
-        dag_id: my_ingestion_dag
-        auth: admin:admin
 ```
 
 ### Target types
@@ -93,7 +87,7 @@ triggers:
 | `type` | Delivers |
 |--------|----------|
 | `cloudevent` (default) | CloudEvents JSON + `Ce-*` headers to a Functions Framework URL |
-| `airflow` / `composer` | `POST /api/v1/dags/{dag_id}/dagRuns` with `{conf: {bucket, name}}` |
+| `http` | Same as `cloudevent` — raw HTTP POST with CloudEvent payload |
 
 ### Manual GCS event (bypass Pub/Sub)
 
@@ -122,7 +116,6 @@ export GCP_RELAY_PUSH_URL=http://host.docker.internal:8099
 
 - [x] `gcp-relay up` orchestration
 - [x] Event inspector UI + replay API
-- [x] Airflow / Composer DAG trigger adapter
 - [x] Object prefix filters
 - [ ] Eventarc-compatible trigger CRUD API
 - [ ] Pub/Sub emulator wiring for non-GCS functions

@@ -109,10 +109,5 @@ func (r *Router) deliver(ctx context.Context, source, topic, bucket, objectName,
 }
 
 func targetURL(t config.Target) string {
-	if t.Type == "airflow" || t.Type == "composer" {
-		if t.DagID != "" {
-			return fmt.Sprintf("%s (dag:%s)", t.URL, t.DagID)
-		}
-	}
 	return t.URL
 }

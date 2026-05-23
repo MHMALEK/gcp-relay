@@ -25,8 +25,6 @@ type Target struct {
 	Type   string `yaml:"type"`
 	URL    string `yaml:"url"`
 	Method string `yaml:"method"`
-	DagID  string `yaml:"dag_id"`
-	Auth   string `yaml:"auth"`
 }
 
 func Load(path string) (*Config, error) {
@@ -53,6 +51,7 @@ func Load(path string) (*Config, error) {
 			if t.Type == "" {
 				t.Type = "cloudevent"
 			}
+			t.URL = os.ExpandEnv(t.URL)
 		}
 	}
 

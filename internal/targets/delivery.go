@@ -3,7 +3,6 @@ package targets
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,8 +17,6 @@ func Deliver(ctx context.Context, client *http.Client, target config.Target, eve
 	switch strings.ToLower(target.Type) {
 	case "", "cloudevent", "cloud_function", "http":
 		return deliverCloudEvent(ctx, client, target, event)
-	case "airflow", "composer":
-		return deliverAirflow(ctx, client, target, bucket, objectName)
 	default:
 		return fmt.Errorf("unknown target type %q", target.Type)
 	}
@@ -47,29 +44,6 @@ func deliverCloudEvent(ctx context.Context, client *http.Client, target config.T
 	req.Header.Set("Ce-Type", event.Type)
 	req.Header.Set("Ce-Specversion", event.SpecVersion)
 	req.Header.Set("Ce-Time", event.Time)
-
-	return roundTrip(client, req)
-}
-
-func deliverAirflow(ctx context.Context, client *http.Client, target config.Target, bucket, objectName string) error {
-	dagID := target.DagID
-	if dagID == "" {
-		return fmt.Errorf("airflow target requires dag_id")
-	}
-
-	base := strings.TrimRight(target.URL, "/")
-	url := fmt.Sprintf("%s/api/v1/dags/%s/dagRuns", base, dagID)
-	conf := map[string]string{"bucket": bucket, "name": objectName}
-	body, _ := json.Marshal(map[string]any{"conf": conf})
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if target.Auth != "" {
-		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(target.Auth)))
-	}
 
 	return roundTrip(client, req)
 }
