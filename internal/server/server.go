@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/MHMALEK/gcp-relay/internal/bootstrap"
 	"github.com/MHMALEK/gcp-relay/internal/history"
 	"github.com/MHMALEK/gcp-relay/internal/router"
 )
@@ -34,6 +35,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /events/{id}/replay", s.handleReplayEvent)
 	mux.HandleFunc("POST /events/gcs", s.handleGCSEvent)
 	mux.HandleFunc("POST /hooks/pubsub/{topic}", s.handlePubSubPush)
+	mux.HandleFunc("POST /admin/bootstrap", s.handleAdminBootstrap)
 
 	staticFS, _ := fs.Sub(staticFiles, "static")
 	mux.Handle("GET /ui/", http.StripPrefix("/ui/", http.FileServer(http.FS(staticFS))))
@@ -123,6 +125,62 @@ func (s *Server) handlePubSubPush(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// adminBootstrapRequest is the request body for POST /admin/bootstrap.
+// Any omitted field falls back to the relay's defaults (env vars or
+// hard-coded fallbacks in internal/bootstrap.DefaultOptions).
+type adminBootstrapRequest struct {
+	ProjectID    string `json:"project_id,omitempty"`
+	Topic        string `json:"topic,omitempty"`
+	Bucket       string `json:"bucket,omitempty"`
+	PushURL      string `json:"push_url,omitempty"`
+	PubSubHost   string `json:"pubsub_host,omitempty"`
+	GCSHost      string `json:"gcs_host,omitempty"`
+}
+
+func (s *Server) handleAdminBootstrap(w http.ResponseWriter, r *http.Request) {
+	opts := bootstrap.DefaultOptions()
+
+	if r.ContentLength > 0 {
+		var req adminBootstrapRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		if req.ProjectID != "" {
+			opts.ProjectID = req.ProjectID
+		}
+		if req.Topic != "" {
+			opts.Topic = req.Topic
+		}
+		if req.Bucket != "" {
+			opts.Bucket = req.Bucket
+		}
+		if req.PushURL != "" {
+			opts.PushRelayURL = req.PushURL
+		}
+		if req.PubSubHost != "" {
+			opts.PubSubHost = req.PubSubHost
+		}
+		if req.GCSHost != "" {
+			opts.GCSHost = req.GCSHost
+		}
+	}
+
+	if err := bootstrap.Run(opts); err != nil {
+		s.log.Printf("admin bootstrap failed: %v", err)
+		writeJSON(w, http.StatusBadGateway, map[string]any{"status": "error", "error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":     "ok",
+		"project_id": opts.ProjectID,
+		"topic":      opts.Topic,
+		"bucket":     opts.Bucket,
+		"push_url":   opts.PushRelayURL,
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

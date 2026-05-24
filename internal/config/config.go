@@ -8,7 +8,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// SchemaVersion is the current triggers.yaml schema version.
+// Configs without an explicit `version:` field are treated as this version
+// for backward compatibility. Unknown versions are rejected.
+const SchemaVersion = "v1"
+
 type Config struct {
+	Version   string    `yaml:"version"`
 	ProjectID string    `yaml:"project_id"`
 	Triggers  []Trigger `yaml:"triggers"`
 }
@@ -36,6 +42,13 @@ func Load(path string) (*Config, error) {
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
+	}
+
+	if cfg.Version == "" {
+		cfg.Version = SchemaVersion
+	}
+	if cfg.Version != SchemaVersion {
+		return nil, fmt.Errorf("unsupported config version %q (this binary supports %q)", cfg.Version, SchemaVersion)
 	}
 
 	if cfg.ProjectID == "" {

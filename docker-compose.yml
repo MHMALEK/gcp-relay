@@ -65,6 +65,8 @@ services:
     environment:
       GCP_RELAY_CONFIG: /config/triggers.example.yaml
       GCP_RELAY_PORT: "8099"
+      PUBSUB_EMULATOR_HOST: pubsub:8085
+      STORAGE_EMULATOR_HOST: http://gcs:4443
     volumes:
       - ./config/triggers.example.yaml:/config/triggers.example.yaml:ro
     depends_on:
