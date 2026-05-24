@@ -32,8 +32,17 @@
   <h2>Details</h2>
   <pre id="detail">Select an event</pre>
   <script>
+    // API base is one directory up from the current /ui/ path, so this UI
+    // keeps working whether served at the root (http://host:8099/ui/) or
+    // behind a reverse-proxy prefix (e.g. http://host/api/gcp-relay/ui/).
+    const API_BASE = (() => {
+      const path = window.location.pathname.replace(/\/ui\/?$/, '/');
+      return path.endsWith('/') ? path.slice(0, -1) : path;
+    })();
+    const api = (p) => API_BASE + p;
+
     async function load() {
-      const res = await fetch('/events');
+      const res = await fetch(api('/events'));
       const events = await res.json();
       const tbody = document.getElementById('rows');
       tbody.innerHTML = '';
@@ -51,16 +60,16 @@
       }
     }
     async function show(id) {
-      const res = await fetch('/events/' + id);
+      const res = await fetch(api('/events/' + id));
       document.getElementById('detail').textContent = JSON.stringify(await res.json(), null, 2);
     }
     async function replay(id) {
-      const res = await fetch('/events/' + id + '/replay', { method: 'POST' });
+      const res = await fetch(api('/events/' + id + '/replay'), { method: 'POST' });
       document.getElementById('detail').textContent = JSON.stringify(await res.json(), null, 2);
       load();
     }
     async function demo() {
-      await fetch('/events/gcs', {
+      await fetch(api('/events/gcs'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bucket: 'demo-bucket', name: 'uploads/hello.txt' })

@@ -117,7 +117,7 @@ curl -s -X POST http://localhost:8099/events/gcs \
 
 ### Remote bootstrap (`POST /admin/bootstrap`)
 
-Programmatic equivalent of `gcp-relay init` — lets downstream consumers (e.g. tract-cli) drive bootstrap over HTTP without touching the Pub/Sub or fake-gcs REST APIs directly.
+Programmatic equivalent of `gcp-relay init` — lets downstream consumers drive bootstrap over HTTP without touching the Pub/Sub or fake-gcs REST APIs directly.
 
 ```bash
 curl -s -X POST http://localhost:8099/admin/bootstrap \
