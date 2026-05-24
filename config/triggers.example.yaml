@@ -1,3 +1,4 @@
+version: v1
 project_id: local-project
 
 triggers:
