@@ -11,4 +11,8 @@ WORKDIR /app
 COPY --from=builder /gcp-relay /usr/local/bin/gcp-relay
 EXPOSE 8099
 ENTRYPOINT ["gcp-relay", "serve"]
-CMD ["--config", "/config/triggers.example.yaml", "--port", "8099"]
+# Default CMD intentionally omits --config so the GCP_RELAY_CONFIG env var
+# (main.go's flag default) wins for downstream consumers that mount their
+# own config. Override with `command: [...]` in compose if you need to
+# pass flags explicitly.
+CMD ["--port", "8099"]
