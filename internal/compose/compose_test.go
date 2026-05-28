@@ -103,6 +103,44 @@ func TestGenerateUnsupportedRuntime(t *testing.T) {
 	}
 }
 
+func TestPortsOverride(t *testing.T) {
+	cfg := &config.Config{ProjectID: "demo"}
+	opts := Options{
+		Images:     testImages(),
+		Ports:      Ports{PubSub: 19085, GCS: 14443, Relay: 18099},
+		ConfigPath: "c.yaml", ProjectDir: t.TempDir(),
+	}
+	out, err := Generate(cfg, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f file
+	if err := yaml.Unmarshal(out, &f); err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]string{
+		"pubsub": "19085:8085",
+		"gcs":    "14443:4443",
+		"relay":  "18099:8099",
+	}
+	for svc, want := range cases {
+		ports := f.Services[svc].Ports
+		if len(ports) != 1 || ports[0] != want {
+			t.Errorf("%s ports=%v want [%s]", svc, ports, want)
+		}
+	}
+}
+
+func TestDefaultPortsFromEnv(t *testing.T) {
+	t.Setenv("GCP_RELAY_HOST_PUBSUB_PORT", "29085")
+	t.Setenv("GCP_RELAY_HOST_GCS_PORT", "24443")
+	t.Setenv("GCP_RELAY_HOST_RELAY_PORT", "28099")
+	p := DefaultPorts()
+	if p.PubSub != 29085 || p.GCS != 24443 || p.Relay != 28099 {
+		t.Fatalf("ports=%+v", p)
+	}
+}
+
 func TestSignatureTypeHTTP(t *testing.T) {
 	if got := signatureType(config.Function{Trigger: config.FunctionTrigger{HTTP: true}}); got != "http" {
 		t.Fatalf("http signature=%q", got)

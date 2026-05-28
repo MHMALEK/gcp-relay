@@ -199,11 +199,12 @@ func loadConfig(configFlag string) (cfg *config.Config, cfgPath, dir string, ok 
 }
 
 func bootstrapOptions(cfg *config.Config, dir string) bootstrap.Options {
+	ports := compose.DefaultPorts()
 	return bootstrap.Options{
 		ProjectID:    cfg.ProjectID,
-		PubSubHost:   envOr("PUBSUB_EMULATOR_HOST", "localhost:8085"),
-		GCSHost:      envOr("STORAGE_EMULATOR_HOST", "http://localhost:4443"),
-		RelayURL:     envOr("GCP_RELAY_URL", "http://localhost:8099"),
+		PubSubHost:   envOr("PUBSUB_EMULATOR_HOST", fmt.Sprintf("localhost:%d", ports.PubSub)),
+		GCSHost:      envOr("STORAGE_EMULATOR_HOST", fmt.Sprintf("http://localhost:%d", ports.GCS)),
+		RelayURL:     envOr("GCP_RELAY_URL", fmt.Sprintf("http://localhost:%d", ports.Relay)),
 		PushRelayURL: envOr("GCP_RELAY_PUSH_URL", "http://relay:8099"),
 		Topic:        compose.FirehoseTopic,
 		ProjectDir:   dir,
@@ -211,7 +212,11 @@ func bootstrapOptions(cfg *config.Config, dir string) bootstrap.Options {
 }
 
 func writeCompose(cfg *config.Config, cfgPath, dir string) (string, error) {
-	out, err := compose.Generate(cfg, compose.Options{ConfigPath: cfgPath, ProjectDir: dir})
+	out, err := compose.Generate(cfg, compose.Options{
+		Ports:      compose.DefaultPorts(),
+		ConfigPath: cfgPath,
+		ProjectDir: dir,
+	})
 	if err != nil {
 		return "", err
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/MHMALEK/gcp-relay/internal/config"
@@ -40,9 +41,29 @@ func DefaultImages() Images {
 	}
 }
 
+// Ports are the host-side ports published for each emulator service. Internal
+// container ports stay fixed; overriding lets the stack coexist with other
+// local containers that already hold the defaults.
+type Ports struct {
+	PubSub int // default 8085
+	GCS    int // default 4443
+	Relay  int // default 8099
+}
+
+// DefaultPorts reads GCP_RELAY_HOST_{PUBSUB,GCS,RELAY}_PORT, falling back to
+// the standard ports.
+func DefaultPorts() Ports {
+	return Ports{
+		PubSub: envInt("GCP_RELAY_HOST_PUBSUB_PORT", 8085),
+		GCS:    envInt("GCP_RELAY_HOST_GCS_PORT", 4443),
+		Relay:  envInt("GCP_RELAY_HOST_RELAY_PORT", 8099),
+	}
+}
+
 // Options configures compose generation.
 type Options struct {
 	Images     Images
+	Ports      Ports
 	ConfigPath string // host path to the config, mounted read-only into the relay
 	ProjectDir string // base dir for resolving relative function source paths
 	StorageDir string // host dir for the fake-gcs filesystem backend
@@ -52,6 +73,9 @@ type Options struct {
 func Generate(cfg *config.Config, opts Options) ([]byte, error) {
 	if opts.Images == (Images{}) {
 		opts.Images = DefaultImages()
+	}
+	if opts.Ports == (Ports{}) {
+		opts.Ports = DefaultPorts()
 	}
 	if opts.ProjectDir == "" {
 		opts.ProjectDir = "."
@@ -78,7 +102,7 @@ func Generate(cfg *config.Config, opts Options) ([]byte, error) {
 
 	f.Services["pubsub"] = &service{
 		Image: opts.Images.PubSub,
-		Ports: []string{"8085:8085"},
+		Ports: []string{fmt.Sprintf("%d:8085", opts.Ports.PubSub)},
 		Healthcheck: &healthcheck{
 			Test:     []string{"CMD", "curl", "-sf", "http://localhost:8085"},
 			Interval: "5s", Timeout: "3s", Retries: 15, StartPeriod: "20s",
@@ -98,7 +122,7 @@ func Generate(cfg *config.Config, opts Options) ([]byte, error) {
 			"-event.list", "finalize,delete,metadataUpdate,archive",
 		},
 		Environment: map[string]string{"PUBSUB_EMULATOR_HOST": "pubsub:8085"},
-		Ports:       []string{"4443:4443"},
+		Ports:       []string{fmt.Sprintf("%d:4443", opts.Ports.GCS)},
 		Volumes:     []string{storageMount + ":/storage"},
 		DependsOn:   map[string]dep{"pubsub": {Condition: "service_healthy"}},
 		Healthcheck: &healthcheck{
@@ -118,7 +142,7 @@ func Generate(cfg *config.Config, opts Options) ([]byte, error) {
 			"PUBSUB_EMULATOR_HOST":     "pubsub:8085",
 			"STORAGE_EMULATOR_HOST":    "http://gcs:4443",
 		},
-		Ports:   []string{"8099:8099"},
+		Ports:   []string{fmt.Sprintf("%d:8099", opts.Ports.Relay)},
 		Volumes: []string{configMount + ":/config/gcp-relay.yaml:ro"},
 		DependsOn: map[string]dep{
 			"pubsub": {Condition: "service_healthy"},
@@ -198,6 +222,15 @@ func absPath(baseDir, p string) (string, error) {
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
 	}
 	return fallback
 }
