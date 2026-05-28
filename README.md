@@ -73,6 +73,34 @@ gcp-relay up
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    subgraph App["Your app (any GCP client)"]
+      U["GCS client<br/>STORAGE_EMULATOR_HOST<br/>= http://gcs.localhost:4443"]
+    end
+
+    subgraph Stack["gcp-relay Docker network (gcp-relay)"]
+      GCS["fake-gcs-server<br/>firehose: all buckets,<br/>all event types"]
+      PS["Pub/Sub emulator<br/>topic: gcs-firehose"]
+      R["relay<br/>local Eventarc +<br/>notification engine +<br/>inspector UI"]
+      FP["python runtime<br/>functions-framework"]
+      FN["node runtime<br/>functions-framework"]
+      FG["go runtime<br/>funcframework"]
+      NT["notification topics<br/>(per gsutil rule)"]
+      PUSH["your own push subs<br/>(pubsub.subscriptions)"]
+    end
+
+    U -- "object upload" --> GCS
+    GCS -- "OBJECT_FINALIZE /<br/>DELETE / ARCHIVE /<br/>METADATA_UPDATE" --> PS
+    PS -- "push" --> R
+    R -- "google.cloud.storage.object.v1.*<br/>CloudEvent (binary mode)" --> FP
+    R -- " " --> FN
+    R -- " " --> FG
+    R -- "republish for<br/>each matching<br/>notification rule" --> NT
+    NT -- "push" --> PUSH
+    NT -- "push -> wrap as<br/>messagePublished" --> R
+```
+
 | Service | Port | Role |
 |---------|------|------|
 | `gcs` | 4443 | fake-gcs-server with all-buckets firehose notifications |
