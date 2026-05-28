@@ -9,3 +9,8 @@ config/triggers.yaml
 .idea/
 .vscode/
 storage/
+.gcp-relay/
+
+# Python build artifacts (from running example functions)
+__pycache__/
+*.pyc

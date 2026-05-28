@@ -80,32 +80,52 @@ Consumers should pin to a `:vX.Y.Z` tag.
 cp config/triggers.example.yaml config/triggers.yaml
 ```
 
-The `triggers.yaml` schema is the **stable public contract** for downstream consumers. It is versioned:
+The config mirrors **real GCP resources** — buckets, Pub/Sub topics/subscriptions,
+GCS bucket notifications, and Cloud Functions — so it maps 1:1 to what you'd
+declare with `gsutil notification create` and `gcloud functions deploy`:
 
 ```yaml
-version: v1            # optional; defaults to v1 for back-compat. Unknown versions are rejected.
+version: v2
 project_id: local-project
 
-triggers:
-  - name: gcs-object-finalize
-    source: pubsub
+buckets:
+  - name: demo-bucket
+    versioning: true
+
+# GCS → Pub/Sub (mirrors `gsutil notification create`)
+notifications:
+  - bucket: demo-bucket
     topic: gcs-notifications
-    filters:
-      event_type: google.cloud.storage.object.v1.finalized
-      object_prefix: uploads/
-    targets:
-      - type: cloudevent
-        url: http://echo-function:8080
+    event_types: [OBJECT_FINALIZE, OBJECT_DELETE]
+    object_name_prefix: uploads/
+    payload_format: JSON_API_V1
+
+# GCS / Pub/Sub → Cloud Function (mirrors `gcloud functions deploy`)
+functions:
+  - name: echo-function
+    url: http://echo-function:8080      # already-running target; use `source:` to have gcp-relay run it
+    trigger:
+      event_filters:
+        type: google.cloud.storage.object.v1.finalized
+        bucket: demo-bucket
 ```
 
-Breaking changes to the schema bump the version (e.g. `v2`). Older versions remain supported.
+How it routes: fake-gcs publishes **every** bucket's object events to one
+firehose topic; the relay acts as local Eventarc, delivering a faithful
+`google.cloud.storage.object.v1.*` CloudEvent to each function whose
+`event_filters` match, and republishing to any matching notification topic.
 
-### Target types
+**Versioning:** `version` is optional and auto-detected (legacy `triggers:` ⇒
+`v1`, otherwise `v2`). Old `v1` trigger configs still load and are normalized
+internally. Unknown versions are rejected.
 
-| `type` | Delivers |
-|--------|----------|
-| `cloudevent` (default) | CloudEvents JSON + `Ce-*` headers to a Functions Framework URL |
-| `http` | Same as `cloudevent` — raw HTTP POST with CloudEvent payload |
+### Function triggers
+
+| `trigger` | Fires on |
+|-----------|----------|
+| `event_filters: {type, bucket, object_name_prefix}` | a GCS object event (Eventarc-style) |
+| `topic: <name>` | a Pub/Sub message on that topic (delivered as `messagePublished`) |
+| `http: true` | a plain HTTP request |
 
 ### Manual GCS event (bypass Pub/Sub)
 
@@ -155,6 +175,12 @@ export GCP_RELAY_PUSH_URL=http://host.docker.internal:8099
 - [ ] Eventarc-compatible trigger CRUD API
 - [ ] Pub/Sub emulator wiring for non-GCS functions
 - [ ] Single static binary bundling emulators (no Docker)
+- [ ] **Terraform support** (future release): apply real `google`-provider resources
+      (`google_storage_bucket`, `google_pubsub_topic`/`_subscription`,
+      `google_storage_notification`) against the local emulators via custom endpoints.
+- [ ] **Terraform for functions** (stretch): a Cloud Functions Admin API shim so
+      `google_cloudfunctions2_function` can deploy to the local stack — true
+      "`terraform apply` runs the whole pipeline locally."
 
 ## License
 
