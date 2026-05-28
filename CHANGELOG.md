@@ -14,6 +14,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `docker compose up` workflow with no `gcp-relay` CLI binary required.
   Wired into [`deploy/docker-compose.yml`](deploy/docker-compose.yml).
 - `docker-cli` shipped in the relay image to support the above.
+- **End-to-end CI workflow** that builds the relay + pubsub + python
+  runner images, brings up the full stack, uploads a real file, and
+  verifies the python function receives the CloudEvent. Runs on every
+  push to master, on every `v*` tag, nightly, and on manual dispatch
+  (not on PRs — keeps PR CI fast).
 
 ## [0.1.0] - 2026-05-28
 

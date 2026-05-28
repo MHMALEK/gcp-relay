@@ -1,0 +1,145 @@
+name: e2e
+
+# Full upload→relay→function chain verification. Runs:
+#   - on push to master  (catches regressions immediately post-merge)
+#   - on tag             (verifies the release artifact is functional)
+#   - nightly            (catches drift in upstream emulator/runtime images)
+#   - manual dispatch    (for ad-hoc checks)
+#
+# Deliberately NOT run on pull_request to keep PR CI fast — the pubsub
+# image build adds ~3 minutes uncached. Use workflow_dispatch on the PR
+# branch if you want to gate a PR on a green e2e.
+on:
+  push:
+    branches: [master, main]
+    tags: ["v*"]
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+
+      - name: Build CLI binary
+        run: go build -o ./gcp-relay-cli ./cmd/gcp-relay
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build relay image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          tags: gcp-relay:e2e
+          cache-from: type=gha,scope=e2e-relay
+          cache-to: type=gha,mode=max,scope=e2e-relay
+
+      - name: Build pubsub image
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/pubsub
+          load: true
+          tags: gcp-relay-pubsub:e2e
+          cache-from: type=gha,scope=e2e-pubsub
+          cache-to: type=gha,mode=max,scope=e2e-pubsub
+
+      - name: Build python runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/runtime-python
+          load: true
+          tags: gcp-relay-runtime-python:e2e
+          cache-from: type=gha,scope=e2e-python
+          cache-to: type=gha,mode=max,scope=e2e-python
+
+      - name: Generate a python-only config for fast CI
+        run: |
+          cat > examples/gcp-relay.yaml <<'EOF'
+          version: v2
+          project_id: local-project
+          buckets:
+            - name: uploads-bucket
+          functions:
+            - name: python-hello
+              runtime: python312
+              source: ./functions/python-hello
+              entry_point: hello
+              trigger:
+                event_filters:
+                  type: google.cloud.storage.object.v1.finalized
+                  bucket: uploads-bucket
+          EOF
+          cat examples/gcp-relay.yaml
+
+      - name: Bring up the stack
+        working-directory: examples
+        env:
+          GCP_RELAY_IMAGE: gcp-relay:e2e
+          GCP_RELAY_PUBSUB_IMAGE: gcp-relay-pubsub:e2e
+          GCP_RELAY_RUNTIME_PYTHON_IMAGE: gcp-relay-runtime-python:e2e
+          GCP_RELAY_GCS_IMAGE: fsouza/fake-gcs-server:1.54.0
+        run: |
+          ../gcp-relay-cli up
+          echo "--- compose ps ---"
+          docker compose -f .gcp-relay/docker-compose.generated.yml ps
+
+      - name: Wait for the python function to be ready
+        run: |
+          for i in $(seq 1 60); do
+            if docker logs gcp-relay-python-hello-1 2>&1 | grep -q "Serving function"; then
+              echo "python-hello ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Upload an object
+        run: |
+          curl -sS -X POST "http://localhost:4443/upload/storage/v1/b/uploads-bucket/o?uploadType=media&name=incoming/ci.txt" \
+            -H "Content-Type: text/plain" \
+            --data-binary "ci e2e check" \
+            -o /dev/null -w "upload: HTTP %{http_code}\n"
+
+      - name: Verify the function received the CloudEvent
+        run: |
+          for i in $(seq 1 60); do
+            if docker logs gcp-relay-python-hello-1 2>&1 | grep -q "gcp-relay: received google.cloud.storage.object.v1.finalized"; then
+              echo "✅ function received the finalized CloudEvent"
+              docker logs gcp-relay-python-hello-1 2>&1 | grep "gcp-relay: received"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "❌ TIMEOUT: function did not receive the event within 120s"
+          echo
+          echo "--- relay /events ---"
+          curl -s http://localhost:8099/events || true
+          echo
+          echo "--- relay logs ---"
+          docker logs gcp-relay-relay-1 2>&1 | tail -40 || true
+          echo
+          echo "--- python-hello logs ---"
+          docker logs gcp-relay-python-hello-1 2>&1 | tail -40 || true
+          echo
+          echo "--- gcs logs ---"
+          docker logs gcp-relay-gcs-1 2>&1 | tail -30 || true
+          exit 1
+
+      - name: Teardown
+        if: always()
+        working-directory: examples
+        run: ../gcp-relay-cli down || true
