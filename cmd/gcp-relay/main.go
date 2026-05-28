@@ -6,7 +6,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
+	"github.com/MHMALEK/gcp-relay/internal/bootstrap"
 	"github.com/MHMALEK/gcp-relay/internal/cli"
 	"github.com/MHMALEK/gcp-relay/internal/config"
 	"github.com/MHMALEK/gcp-relay/internal/history"
@@ -62,8 +64,52 @@ func runServe(args []string) int {
 	addr := fmt.Sprintf(":%s", *port)
 	logger.Printf("gcp-relay %s listening on %s project=%s functions=%d notifications=%d inspector=http://localhost:%s/ui/", version, addr, cfg.ProjectID, len(cfg.Functions), len(cfg.Notifications), *port)
 
+	if os.Getenv("GCP_RELAY_AUTO_BOOTSTRAP") == "true" {
+		go autoBootstrap(logger, cfg)
+	}
+
 	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {
 		logger.Fatalf("server stopped: %v", err)
 	}
 	return 0
+}
+
+// autoBootstrap provisions every resource declared in cfg against the
+// emulators using in-network DNS names (pubsub:8085, gcs:4443). It retries
+// with exponential backoff until the emulators are up or 2 minutes pass —
+// enabling the static emulators-only compose to work without a separate
+// `gcp-relay init` step.
+func autoBootstrap(logger *log.Logger, cfg *config.Config) {
+	opts := bootstrap.Options{
+		ProjectID:    cfg.ProjectID,
+		PubSubHost:   envOr("PUBSUB_EMULATOR_HOST", "pubsub:8085"),
+		GCSHost:      envOr("STORAGE_EMULATOR_HOST", "http://gcs:4443"),
+		PushRelayURL: envOr("GCP_RELAY_PUSH_URL", "http://relay:8099"),
+		Topic:        envOr("GCP_RELAY_FIREHOSE_TOPIC", "gcs-firehose"),
+		ProjectDir:   envOr("GCP_RELAY_PROJECT_DIR", "/config"),
+	}
+	deadline := time.Now().Add(120 * time.Second)
+	backoff := time.Second
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if err := bootstrap.RunFromConfig(cfg, opts); err == nil {
+			logger.Printf("auto-bootstrap complete project=%s firehose=%s", opts.ProjectID, opts.Topic)
+			return
+		} else {
+			lastErr = err
+			logger.Printf("auto-bootstrap retry in %s: %v", backoff, err)
+		}
+		time.Sleep(backoff)
+		if backoff < 8*time.Second {
+			backoff *= 2
+		}
+	}
+	logger.Printf("auto-bootstrap gave up after 120s: %v", lastErr)
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
