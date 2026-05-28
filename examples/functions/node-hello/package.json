@@ -1,0 +1,9 @@
+{
+  "name": "node-hello",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "dependencies": {
+    "@google-cloud/functions-framework": "^3.0.0"
+  }
+}

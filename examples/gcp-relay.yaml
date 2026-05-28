@@ -13,3 +13,12 @@ functions:
       event_filters:
         type: google.cloud.storage.object.v1.finalized
         bucket: uploads-bucket
+
+  - name: node-hello
+    runtime: nodejs20
+    source: ./functions/node-hello
+    entry_point: hello
+    trigger:
+      event_filters:
+        type: google.cloud.storage.object.v1.finalized
+        bucket: uploads-bucket
