@@ -17,7 +17,7 @@ import (
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "up", "down", "init", "demo", "help", "-h", "--help":
+		case "up", "down", "init", "demo", "validate", "help", "-h", "--help":
 			os.Exit(cli.Run(os.Args[1:]))
 		}
 	}
@@ -54,7 +54,7 @@ func runServe(args []string) int {
 	srv := server.New(r, store, logger)
 
 	addr := fmt.Sprintf(":%s", *port)
-	logger.Printf("listening on %s project=%s triggers=%d inspector=http://localhost:%s/ui/", addr, cfg.ProjectID, len(cfg.Triggers), *port)
+	logger.Printf("listening on %s project=%s functions=%d notifications=%d inspector=http://localhost:%s/ui/", addr, cfg.ProjectID, len(cfg.Functions), len(cfg.Notifications), *port)
 
 	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {
 		logger.Fatalf("server stopped: %v", err)

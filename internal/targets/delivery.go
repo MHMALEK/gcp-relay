@@ -7,33 +7,23 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/MHMALEK/gcp-relay/internal/cloudevents"
-	"github.com/MHMALEK/gcp-relay/internal/config"
 )
 
-func Deliver(ctx context.Context, client *http.Client, target config.Target, event cloudevents.Envelope, bucket, objectName string) error {
-	switch strings.ToLower(target.Type) {
-	case "", "cloudevent", "cloud_function", "http":
-		return deliverCloudEvent(ctx, client, target, event)
-	default:
-		return fmt.Errorf("unknown target type %q", target.Type)
-	}
-}
-
-func deliverCloudEvent(ctx context.Context, client *http.Client, target config.Target, event cloudevents.Envelope) error {
+// DeliverCloudEvent POSTs a CloudEvent to url in structured JSON content mode,
+// also setting the binary-mode Ce-* headers so any Functions Framework target
+// (which accepts either) can parse it.
+func DeliverCloudEvent(ctx context.Context, client *http.Client, url, method string, event cloudevents.Envelope) error {
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return err
 	}
-
-	method := target.Method
 	if method == "" {
 		method = http.MethodPost
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, target.URL, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
@@ -44,6 +34,9 @@ func deliverCloudEvent(ctx context.Context, client *http.Client, target config.T
 	req.Header.Set("Ce-Type", event.Type)
 	req.Header.Set("Ce-Specversion", event.SpecVersion)
 	req.Header.Set("Ce-Time", event.Time)
+	if event.Subject != "" {
+		req.Header.Set("Ce-Subject", event.Subject)
+	}
 
 	return roundTrip(client, req)
 }
