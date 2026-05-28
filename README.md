@@ -39,17 +39,32 @@ go run ./cmd/gcp-relay demo
 
 | Command | Description |
 |---------|-------------|
-| `gcp-relay up [--build]` | Start stack + bootstrap Pub/Sub/GCS |
-| `gcp-relay down` | Stop stack |
-| `gcp-relay init` | Create topic, push subscription, bucket notification |
-| `gcp-relay demo` | Upload demo file to local GCS |
-| `gcp-relay serve` | Run relay only (native) |
+| `gcp-relay up [--config path] [--build]` | Generate compose, start stack, bootstrap |
+| `gcp-relay down [--config path]` | Stop the generated stack |
+| `gcp-relay validate [--config path]` | Validate the config (incl. function sources) |
+| `gcp-relay init [--config path]` | Bootstrap against an already-running stack |
+| `gcp-relay demo` | Upload a demo file to local GCS |
+| `gcp-relay serve` | Run the relay only (native) |
+| `gcp-relay version` | Print the version |
 
-Install locally:
+### Install
+
+Download a prebuilt binary from the [GitHub Releases](https://github.com/MHMALEK/gcp-relay/releases) (linux/macOS, amd64/arm64), or:
 
 ```bash
-go install ./cmd/gcp-relay
-gcp-relay up --build
+go install github.com/MHMALEK/gcp-relay/cmd/gcp-relay@latest
+gcp-relay up
+```
+
+### Host port overrides
+
+If the default ports clash with other local containers, override them:
+
+```bash
+export GCP_RELAY_HOST_PUBSUB_PORT=18085
+export GCP_RELAY_HOST_GCS_PORT=14443
+export GCP_RELAY_HOST_RELAY_PORT=18099
+gcp-relay up
 ```
 
 ## Architecture
@@ -69,10 +84,22 @@ Prebuilt images are published to GHCR on every push to the default branch and on
 |-------|---------|
 | `ghcr.io/mhmalek/gcp-relay` | The relay binary (entrypoint `gcp-relay serve`) |
 | `ghcr.io/mhmalek/gcp-relay-pubsub` | Pub/Sub emulator container used in the compose stack |
+| `ghcr.io/mhmalek/gcp-relay-runtime-python` | Python Functions Framework runner |
+| `ghcr.io/mhmalek/gcp-relay-runtime-node` | Node.js Functions Framework runner |
 
 Tags: `:main` (rolling default branch), `:sha-<short>`, `:vX.Y.Z`, `:vX.Y`, `:latest` (latest tagged release).
 
 Consumers should pin to a `:vX.Y.Z` tag.
+
+### Releasing
+
+Releases are cut by pushing a semver tag:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+That triggers two parallel workflows: [`release.yml`](.github/workflows/release.yml) runs `goreleaser` to publish multi-platform binaries + a GitHub release, and [`publish-images.yml`](.github/workflows/publish-images.yml) builds the four container images to GHCR.
 
 ## Configuration
 

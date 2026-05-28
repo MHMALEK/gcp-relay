@@ -14,9 +14,15 @@ import (
 	"github.com/MHMALEK/gcp-relay/internal/server"
 )
 
+// version is injected at build time via -ldflags "-X main.version=vX.Y.Z".
+var version = "dev"
+
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "version", "--version", "-v":
+			fmt.Println(version)
+			os.Exit(0)
 		case "up", "down", "init", "demo", "validate", "help", "-h", "--help":
 			os.Exit(cli.Run(os.Args[1:]))
 		}
@@ -54,7 +60,7 @@ func runServe(args []string) int {
 	srv := server.New(r, store, logger)
 
 	addr := fmt.Sprintf(":%s", *port)
-	logger.Printf("listening on %s project=%s functions=%d notifications=%d inspector=http://localhost:%s/ui/", addr, cfg.ProjectID, len(cfg.Functions), len(cfg.Notifications), *port)
+	logger.Printf("gcp-relay %s listening on %s project=%s functions=%d notifications=%d inspector=http://localhost:%s/ui/", version, addr, cfg.ProjectID, len(cfg.Functions), len(cfg.Notifications), *port)
 
 	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {
 		logger.Fatalf("server stopped: %v", err)
