@@ -3,7 +3,6 @@ package targets
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,28 +10,32 @@ import (
 	"github.com/MHMALEK/gcp-relay/internal/cloudevents"
 )
 
-// DeliverCloudEvent POSTs a CloudEvent to url in structured JSON content mode,
-// also setting the binary-mode Ce-* headers so any Functions Framework target
-// (which accepts either) can parse it.
+// DeliverCloudEvent POSTs a CloudEvent in HTTP binary content mode, matching
+// what real Eventarc delivers to Cloud Run / Cloud Functions 2nd gen: the
+// body is just the `data` payload, with envelope metadata in `Ce-*` headers.
+// Mixing binary and structured modes confuses some Functions Framework
+// implementations (Node treats Ce-* presence as binary mode and reads the
+// body as data — so a structured envelope ends up with `data` nested twice).
 func DeliverCloudEvent(ctx context.Context, client *http.Client, url, method string, event cloudevents.Envelope) error {
-	payload, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
 	if method == "" {
 		method = http.MethodPost
 	}
+	body := []byte(event.Data)
 
-	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 
-	req.Header.Set("Content-Type", "application/cloudevents+json")
+	contentType := event.DataContentType
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Ce-Specversion", event.SpecVersion)
 	req.Header.Set("Ce-Id", event.ID)
 	req.Header.Set("Ce-Source", event.Source)
 	req.Header.Set("Ce-Type", event.Type)
-	req.Header.Set("Ce-Specversion", event.SpecVersion)
 	req.Header.Set("Ce-Time", event.Time)
 	if event.Subject != "" {
 		req.Header.Set("Ce-Subject", event.Subject)

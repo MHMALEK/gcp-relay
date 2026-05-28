@@ -44,11 +44,20 @@ func newRouter(t *testing.T, cfg *config.Config) (*router.Router, *stubPublisher
 	return r, pub
 }
 
-func captureServer(t *testing.T, got *cloudevents.Envelope) *httptest.Server {
+// captured captures the binary-mode CloudEvent the router delivers: envelope
+// metadata from Ce-* headers, body as the raw data payload.
+type captured struct {
+	Type    string
+	Subject string
+	Body    []byte
+}
+
+func captureServer(t *testing.T, got *captured) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, got)
+		got.Type = r.Header.Get("Ce-Type")
+		got.Subject = r.Header.Get("Ce-Subject")
+		got.Body, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
 	}))
 }
@@ -68,7 +77,7 @@ func firehosePush(eventType, bucket, object string) []byte {
 }
 
 func TestStorageEventRoutesToFunctionAndNotification(t *testing.T) {
-	var got cloudevents.Envelope
+	var got captured
 	srv := captureServer(t, &got)
 	defer srv.Close()
 
@@ -121,7 +130,7 @@ func TestStorageEventNoMatchIsNoOp(t *testing.T) {
 }
 
 func TestEventTypeFiltering(t *testing.T) {
-	var got cloudevents.Envelope
+	var got captured
 	srv := captureServer(t, &got)
 	defer srv.Close()
 
@@ -149,7 +158,7 @@ func TestEventTypeFiltering(t *testing.T) {
 }
 
 func TestTopicTriggeredFunction(t *testing.T) {
-	var got cloudevents.Envelope
+	var got captured
 	srv := captureServer(t, &got)
 	defer srv.Close()
 
