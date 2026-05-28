@@ -203,7 +203,7 @@ talks to the local stack:
 set -a && . deploy/env.emulator && set +a
 # STORAGE_EMULATOR_HOST=http://gcs.localhost:4443
 # PUBSUB_EMULATOR_HOST=pubsub.localhost:8085
-# GOOGLE_APPLICATION_CREDENTIALS=.../deploy/fake-adc.json
+# GOOGLE_CLOUD_PROJECT=local-project
 ```
 
 The canonical hostnames `gcs.localhost` / `pubsub.localhost` resolve via the
@@ -226,9 +226,7 @@ extra knob:
 | **Node** (`@google-cloud/storage`) | env var **+** `new Storage({ apiEndpoint, useAuthWithCustomEndpoint: false })` | one option |
 | **Java** | `StorageOptions.newBuilder().setHost("http://gcs.localhost:4443").setCredentials(NoCredentials.getInstance()).build()` | a few lines |
 
-`deploy/fake-adc.json` is a valid-shape but worthless ADC JSON so clients
-that still fall through Application Default Credentials get a parseable
-file instead of hitting Google's metadata server.
+If a client still falls through Application Default Credentials and complains, run a one-time `gcloud auth application-default login` — the emulators never read those credentials, but ADC stops failing.
 
 ## Standalone use (no CLI)
 
