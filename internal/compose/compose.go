@@ -98,11 +98,17 @@ func Generate(cfg *config.Config, opts Options) ([]byte, error) {
 		project = "local-project"
 	}
 
-	f := file{Services: map[string]*service{}}
+	f := file{
+		Services: map[string]*service{},
+		Networks: map[string]networkDef{NetworkName: {Name: NetworkName}},
+	}
 
 	f.Services["pubsub"] = &service{
 		Image: opts.Images.PubSub,
 		Ports: []string{fmt.Sprintf("%d:8085", opts.Ports.PubSub)},
+		Networks: map[string]svcNet{
+			NetworkName: {Aliases: []string{"pubsub.localhost"}},
+		},
 		Healthcheck: &healthcheck{
 			Test:     []string{"CMD", "curl", "-sf", "http://localhost:8085"},
 			Interval: "5s", Timeout: "3s", Retries: 15, StartPeriod: "20s",
@@ -116,7 +122,7 @@ func Generate(cfg *config.Config, opts Options) ([]byte, error) {
 			"-port", "4443",
 			"-backend", "filesystem",
 			"-filesystem-root", "/storage",
-			"-public-host", "gcs:4443",
+			"-public-host", "gcs.localhost:4443",
 			"-event.pubsub-project-id", project,
 			"-event.pubsub-topic", FirehoseTopic,
 			"-event.list", "finalize,delete,metadataUpdate,archive",
@@ -125,6 +131,9 @@ func Generate(cfg *config.Config, opts Options) ([]byte, error) {
 		Ports:       []string{fmt.Sprintf("%d:4443", opts.Ports.GCS)},
 		Volumes:     []string{storageMount + ":/storage"},
 		DependsOn:   map[string]dep{"pubsub": {Condition: "service_healthy"}},
+		Networks: map[string]svcNet{
+			NetworkName: {Aliases: []string{"gcs.localhost", "storage.gcp.localhost"}},
+		},
 		Healthcheck: &healthcheck{
 			Test:     []string{"CMD", "wget", "-q", "-O", "-", "http://localhost:4443/_internal/healthcheck"},
 			Interval: "5s", Timeout: "3s", Retries: 10,
@@ -140,13 +149,16 @@ func Generate(cfg *config.Config, opts Options) ([]byte, error) {
 			"GCP_RELAY_FIREHOSE_TOPIC": FirehoseTopic,
 			"GCP_RELAY_PUSH_URL":       "http://relay:8099",
 			"PUBSUB_EMULATOR_HOST":     "pubsub:8085",
-			"STORAGE_EMULATOR_HOST":    "http://gcs:4443",
+			"STORAGE_EMULATOR_HOST":    "http://gcs.localhost:4443",
 		},
 		Ports:   []string{fmt.Sprintf("%d:8099", opts.Ports.Relay)},
 		Volumes: []string{configMount + ":/config/gcp-relay.yaml:ro"},
 		DependsOn: map[string]dep{
 			"pubsub": {Condition: "service_healthy"},
 			"gcs":    {Condition: "service_healthy"},
+		},
+		Networks: map[string]svcNet{
+			NetworkName: {Aliases: []string{"relay.localhost"}},
 		},
 		Healthcheck: &healthcheck{
 			Test:     []string{"CMD", "curl", "-sf", "http://localhost:8099/health"},
@@ -179,6 +191,7 @@ func Generate(cfg *config.Config, opts Options) ([]byte, error) {
 			Environment: env,
 			Volumes:     []string{src + ":/workspace"},
 			DependsOn:   map[string]dep{"relay": {Condition: "service_started"}},
+			Networks:    map[string]svcNet{NetworkName: {}},
 		}
 		if fn.Port != 0 {
 			svc.Ports = []string{fmt.Sprintf("%d:8080", fn.Port)}
@@ -237,8 +250,13 @@ func envInt(key string, fallback int) int {
 
 // --- minimal docker-compose schema (deterministic YAML output) ---
 
+// NetworkName is the fixed name of the Docker network the stack runs on, so
+// apps in other compose stacks can attach with `networks: { gcp-relay: { external: true } }`.
+const NetworkName = "gcp-relay"
+
 type file struct {
-	Services map[string]*service `yaml:"services"`
+	Services map[string]*service   `yaml:"services"`
+	Networks map[string]networkDef `yaml:"networks,omitempty"`
 }
 
 type service struct {
@@ -249,7 +267,16 @@ type service struct {
 	Ports       []string          `yaml:"ports,omitempty"`
 	Volumes     []string          `yaml:"volumes,omitempty"`
 	DependsOn   map[string]dep    `yaml:"depends_on,omitempty"`
+	Networks    map[string]svcNet `yaml:"networks,omitempty"`
 	Healthcheck *healthcheck      `yaml:"healthcheck,omitempty"`
+}
+
+type svcNet struct {
+	Aliases []string `yaml:"aliases,omitempty"`
+}
+
+type networkDef struct {
+	Name string `yaml:"name,omitempty"`
 }
 
 type dep struct {

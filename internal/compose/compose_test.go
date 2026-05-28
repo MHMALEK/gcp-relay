@@ -131,6 +131,60 @@ func TestPortsOverride(t *testing.T) {
 	}
 }
 
+func TestCanonicalNetworkAndAliases(t *testing.T) {
+	cfg := &config.Config{
+		ProjectID: "demo",
+		Functions: []config.Function{{
+			Name: "fn", Runtime: "python312", Source: "./fn", EntryPoint: "h",
+			Trigger: config.FunctionTrigger{HTTP: true},
+		}},
+	}
+	out, err := Generate(cfg, Options{Images: testImages(), ConfigPath: "c.yaml", ProjectDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f file
+	if err := yaml.Unmarshal(out, &f); err != nil {
+		t.Fatal(err)
+	}
+	if f.Networks[NetworkName].Name != NetworkName {
+		t.Fatalf("expected network %q with fixed name; got %+v", NetworkName, f.Networks)
+	}
+	cases := map[string][]string{
+		"gcs":    {"gcs.localhost", "storage.gcp.localhost"},
+		"pubsub": {"pubsub.localhost"},
+		"relay":  {"relay.localhost"},
+	}
+	for svc, want := range cases {
+		aliases := f.Services[svc].Networks[NetworkName].Aliases
+		if !sliceEqual(aliases, want) {
+			t.Errorf("%s aliases=%v want %v", svc, aliases, want)
+		}
+	}
+	// gcs -public-host must match the canonical alias so signed URLs from
+	// other stacks resolve correctly.
+	gcsCmd := strings.Join(f.Services["gcs"].Command, " ")
+	if !strings.Contains(gcsCmd, "-public-host gcs.localhost:4443") {
+		t.Fatalf("gcs -public-host not pinned to canonical alias: %s", gcsCmd)
+	}
+	// Function services must be on the network too.
+	if _, ok := f.Services["fn"].Networks[NetworkName]; !ok {
+		t.Fatal("function service not on the gcp-relay network")
+	}
+}
+
+func sliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestDefaultPortsFromEnv(t *testing.T) {
 	t.Setenv("GCP_RELAY_HOST_PUBSUB_PORT", "29085")
 	t.Setenv("GCP_RELAY_HOST_GCS_PORT", "24443")
