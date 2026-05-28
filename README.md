@@ -256,20 +256,34 @@ extra knob:
 
 If a client still falls through Application Default Credentials and complains, run a one-time `gcloud auth application-default login` — the emulators never read those credentials, but ADC stops failing.
 
-## Standalone use (no CLI)
+## Two run models
 
-If you'd rather run gcp-relay's emulators in your own compose stack and
-manage function services yourself, use the standalone stack at
-[`deploy/docker-compose.yml`](deploy/docker-compose.yml). The relay
-self-bootstraps from its config via `GCP_RELAY_AUTO_BOOTSTRAP=true`:
+You have two equally-supported ways to bring the stack up:
+
+**A. `gcp-relay up` (CLI generates compose).** Installs the small CLI
+binary; reads your `gcp-relay.yaml`; renders a `docker-compose` with one
+runner service per source-based function; runs it. No Docker socket
+involved.
+
+**B. `docker compose up` (relay launches functions via the socket).**
+The standalone stack at [`deploy/docker-compose.yml`](deploy/docker-compose.yml)
+runs the emulators + relay; the relay itself self-bootstraps from your
+config **and** launches one function container per source-based function
+through a mounted `/var/run/docker.sock`. No CLI binary needed.
 
 ```bash
 GCP_RELAY_CONFIG_HOST_PATH=$PWD/gcp-relay.yaml \
+GCP_RELAY_HOST_ROOT=$PWD \
   docker compose -f deploy/docker-compose.yml up
 ```
 
+`GCP_RELAY_HOST_ROOT` is the *host* path of the directory holding your
+config + function folders. The relay can't infer it (it only sees its
+own filesystem), but the docker daemon creating sibling function
+containers needs host paths to resolve the source volume mounts.
+
 Cross-stack apps attach to the shared network by adding this to their
-compose:
+own compose:
 
 ```yaml
 networks:

@@ -1,17 +1,22 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/MHMALEK/gcp-relay/internal/bootstrap"
 	"github.com/MHMALEK/gcp-relay/internal/cli"
+	"github.com/MHMALEK/gcp-relay/internal/compose"
 	"github.com/MHMALEK/gcp-relay/internal/config"
 	"github.com/MHMALEK/gcp-relay/internal/history"
+	"github.com/MHMALEK/gcp-relay/internal/launcher"
 	"github.com/MHMALEK/gcp-relay/internal/router"
 	"github.com/MHMALEK/gcp-relay/internal/server"
 )
@@ -66,6 +71,31 @@ func runServe(args []string) int {
 
 	if os.Getenv("GCP_RELAY_AUTO_BOOTSTRAP") == "true" {
 		go autoBootstrap(logger, cfg)
+	}
+
+	if os.Getenv("GCP_RELAY_LAUNCH_FUNCTIONS") == "true" {
+		l := launcher.NewDocker(
+			envOr("GCP_RELAY_NETWORK", "gcp-relay"),
+			os.Getenv("GCP_RELAY_HOST_ROOT"),
+			compose.DefaultImages(),
+			logger,
+		)
+		if err := l.Start(context.Background(), cfg); err != nil {
+			logger.Printf("launcher: %v", err)
+		} else {
+			// Best-effort cleanup on SIGTERM/SIGINT.
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+			go func() {
+				<-sigCh
+				stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if err := l.Stop(stopCtx); err != nil {
+					logger.Printf("launcher stop: %v", err)
+				}
+				os.Exit(0)
+			}()
+		}
 	}
 
 	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {

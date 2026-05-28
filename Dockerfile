@@ -6,7 +6,9 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /gcp-relay ./cmd/gcp-relay
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates curl
+# docker-cli is included so the relay can launch function containers via a
+# mounted /var/run/docker.sock when GCP_RELAY_LAUNCH_FUNCTIONS=true.
+RUN apk add --no-cache ca-certificates curl docker-cli
 WORKDIR /app
 COPY --from=builder /gcp-relay /usr/local/bin/gcp-relay
 EXPOSE 8099

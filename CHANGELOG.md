@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`DockerLauncher`**: the relay can now launch function containers
+  itself via a mounted `/var/run/docker.sock` when
+  `GCP_RELAY_LAUNCH_FUNCTIONS=true`. Enables a pure
+  `docker compose up` workflow with no `gcp-relay` CLI binary required.
+  Wired into [`deploy/docker-compose.yml`](deploy/docker-compose.yml).
+- `docker-cli` shipped in the relay image to support the above.
+
 ## [0.1.0] - 2026-05-28
 
 The first release of the GCP-faithful local Eventarc + Cloud Functions runner.

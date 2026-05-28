@@ -1,18 +1,22 @@
 # Standalone gcp-relay stack: GCS + Pub/Sub emulators + relay.
 #
-# Use this when you want the gcp-relay infrastructure inside your own
-# docker-compose project and you'll manage your own function services
-# alongside it.
-#
 # Bring it up with the path to your gcp-relay.yaml:
 #
 #   GCP_RELAY_CONFIG_HOST_PATH=$PWD/gcp-relay.yaml \
+#   GCP_RELAY_HOST_ROOT=$PWD \
 #     docker compose -f deploy/docker-compose.yml up
 #
-# The relay self-bootstraps the declared buckets/topics/subscriptions on
-# startup via GCP_RELAY_AUTO_BOOTSTRAP=true. To attach app/function
-# services from another compose stack, add this network block to that
-# project's compose:
+# The relay self-bootstraps the declared buckets/topics/subscriptions
+# (GCP_RELAY_AUTO_BOOTSTRAP=true) AND launches one container per
+# source-based function in your config via the mounted docker socket
+# (GCP_RELAY_LAUNCH_FUNCTIONS=true). No `gcp-relay` CLI required.
+#
+# GCP_RELAY_HOST_ROOT is the *host* path of the directory holding your
+# gcp-relay.yaml and function source folders. The relay can't infer it
+# (it sees only its own filesystem), but the docker daemon creating
+# sibling function containers needs host paths to resolve volume mounts.
+#
+# To attach app services from another compose stack, add to that compose:
 #
 #   networks:
 #     gcp-relay:
@@ -79,12 +83,15 @@ services:
       GCP_RELAY_FIREHOSE_TOPIC: gcs-firehose
       GCP_RELAY_PUSH_URL: http://relay:8099
       GCP_RELAY_AUTO_BOOTSTRAP: "true"
+      GCP_RELAY_LAUNCH_FUNCTIONS: "true"
+      GCP_RELAY_HOST_ROOT: ${GCP_RELAY_HOST_ROOT:?set GCP_RELAY_HOST_ROOT to the host path of your project root}
       PUBSUB_EMULATOR_HOST: pubsub:8085
       STORAGE_EMULATOR_HOST: http://gcs.localhost:4443
     ports:
       - "${GCP_RELAY_HOST_RELAY_PORT:-8099}:8099"
     volumes:
       - ${GCP_RELAY_CONFIG_HOST_PATH:?set GCP_RELAY_CONFIG_HOST_PATH to your gcp-relay.yaml}:/config/gcp-relay.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       gcp-relay:
         aliases: [relay.localhost]
