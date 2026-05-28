@@ -113,10 +113,12 @@ func runUp(args []string) int {
 		return 1
 	}
 
+	ports := compose.DefaultPorts()
 	fmt.Println("gcp-relay is ready")
-	fmt.Println("  Inspector:  http://localhost:8099/ui/")
-	fmt.Println("  Relay API:  http://localhost:8099/events")
-	fmt.Println("  GCS:        http://localhost:4443")
+	fmt.Printf("  Inspector:  http://localhost:%d/ui/\n", ports.Relay)
+	fmt.Printf("  Relay API:  http://localhost:%d/events\n", ports.Relay)
+	fmt.Printf("  GCS:        http://localhost:%d\n", ports.GCS)
+	fmt.Printf("  Pub/Sub:    localhost:%d\n", ports.PubSub)
 	return 0
 }
 
