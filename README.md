@@ -184,15 +184,42 @@ All fields are optional and fall back to the relay's defaults (`GCP_RELAY_PROJEC
 - **UI:** http://localhost:8099/ui/
 - **API:** `GET /events`, `GET /events/{id}`, `POST /events/{id}/replay`
 
-## SDK / client setup
+## Pointing your app at the emulators
+
+A presets file lives at [`deploy/env.emulator`](deploy/env.emulator) — source
+it (or pass the same vars to `docker run -e ...`) and any GCP client library
+talks to the local stack:
 
 ```bash
-export STORAGE_EMULATOR_HOST=http://localhost:4443
-export PUBSUB_EMULATOR_HOST=localhost:8085
-export GCP_RELAY_URL=http://localhost:8099
-# Pub/Sub emulator runs in Docker — push subscriptions must reach the host relay:
-export GCP_RELAY_PUSH_URL=http://host.docker.internal:8099
+set -a && . deploy/env.emulator && set +a
+# STORAGE_EMULATOR_HOST=http://gcs.localhost:4443
+# PUBSUB_EMULATOR_HOST=pubsub.localhost:8085
+# GOOGLE_APPLICATION_CREDENTIALS=.../deploy/fake-adc.json
 ```
+
+The canonical hostnames `gcs.localhost` / `pubsub.localhost` resolve via the
+Docker network alias for any container on the `gcp-relay` network. For
+apps running directly on your host, either:
+
+- use `localhost:<published port>` (works with no setup), or
+- add a one-time line to `/etc/hosts`:
+  `127.0.0.1  gcs.localhost pubsub.localhost`
+
+### Per-language auth
+
+The env var honoring is consistent across Go/Python; Node and Java need an
+extra knob:
+
+| Client | What's needed | Code change |
+|---|---|---|
+| **Go** (`cloud.google.com/go/storage`) | `STORAGE_EMULATOR_HOST` only — auto-reroutes and skips auth | none |
+| **Python** (`google-cloud-storage`) | `STORAGE_EMULATOR_HOST` only — auto-reroutes + anonymous creds | none |
+| **Node** (`@google-cloud/storage`) | env var **+** `new Storage({ apiEndpoint, useAuthWithCustomEndpoint: false })` | one option |
+| **Java** | `StorageOptions.newBuilder().setHost("http://gcs.localhost:4443").setCredentials(NoCredentials.getInstance()).build()` | a few lines |
+
+`deploy/fake-adc.json` is a valid-shape but worthless ADC JSON so clients
+that still fall through Application Default Credentials get a parseable
+file instead of hitting Google's metadata server.
 
 ## Roadmap
 

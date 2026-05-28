@@ -1,10 +1,11 @@
 name: publish-images
 
-# Publishes four images to GHCR:
+# Publishes five images to GHCR:
 #   ghcr.io/<owner>/gcp-relay                  (the relay binary)
 #   ghcr.io/<owner>/gcp-relay-pubsub           (the Pub/Sub emulator container)
 #   ghcr.io/<owner>/gcp-relay-runtime-python   (Python Functions Framework runner)
 #   ghcr.io/<owner>/gcp-relay-runtime-node     (Node Functions Framework runner)
+#   ghcr.io/<owner>/gcp-relay-runtime-go       (Go Functions Framework runner)
 #
 # Tags:
 #   - On push to default branch: `:main` + `:sha-<short>`
@@ -41,6 +42,9 @@ jobs:
           - image: gcp-relay-runtime-node
             context: docker/runtime-node
             dockerfile: docker/runtime-node/Dockerfile
+          - image: gcp-relay-runtime-go
+            context: docker/runtime-go
+            dockerfile: docker/runtime-go/Dockerfile
     steps:
       - uses: actions/checkout@v4
 
