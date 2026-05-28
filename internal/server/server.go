@@ -131,12 +131,12 @@ func (s *Server) handlePubSubPush(w http.ResponseWriter, r *http.Request) {
 // Any omitted field falls back to the relay's defaults (env vars or
 // hard-coded fallbacks in internal/bootstrap.DefaultOptions).
 type adminBootstrapRequest struct {
-	ProjectID    string `json:"project_id,omitempty"`
-	Topic        string `json:"topic,omitempty"`
-	Bucket       string `json:"bucket,omitempty"`
-	PushURL      string `json:"push_url,omitempty"`
-	PubSubHost   string `json:"pubsub_host,omitempty"`
-	GCSHost      string `json:"gcs_host,omitempty"`
+	ProjectID  string `json:"project_id,omitempty"`
+	Topic      string `json:"topic,omitempty"`
+	Bucket     string `json:"bucket,omitempty"`
+	PushURL    string `json:"push_url,omitempty"`
+	PubSubHost string `json:"pubsub_host,omitempty"`
+	GCSHost    string `json:"gcs_host,omitempty"`
 }
 
 func (s *Server) handleAdminBootstrap(w http.ResponseWriter, r *http.Request) {
