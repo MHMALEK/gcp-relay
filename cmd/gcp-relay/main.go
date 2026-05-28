@@ -25,7 +25,7 @@ func main() {
 		case "version", "--version", "-v":
 			fmt.Println(version)
 			os.Exit(0)
-		case "up", "down", "init", "demo", "validate", "help", "-h", "--help":
+		case "up", "down", "init", "demo", "validate", "plan", "logs", "help", "-h", "--help":
 			os.Exit(cli.Run(os.Args[1:]))
 		}
 	}

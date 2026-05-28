@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -27,6 +28,10 @@ func Run(args []string) int {
 		return runDown(args[1:])
 	case "validate":
 		return runValidate(args[1:])
+	case "plan":
+		return runPlan(args[1:])
+	case "logs":
+		return runLogs(args[1:])
 	case "init":
 		return runInit(args[1:])
 	case "demo":
@@ -49,6 +54,9 @@ Usage:
   gcp-relay up [--config path] [--build]   Generate compose, start stack, bootstrap
   gcp-relay down [--config path]           Stop the generated stack
   gcp-relay validate [--config path]       Validate the config (incl. function sources)
+  gcp-relay plan [--config path]           Show what 'up' would create
+  gcp-relay logs <function> [--config path] [--follow]
+                                           Tail a function's logs from the stack
   gcp-relay init [--config path]           Bootstrap against an already-running stack
   gcp-relay demo                           Upload a demo object to local GCS
 
@@ -150,6 +158,148 @@ func runValidate(args []string) int {
 	fmt.Printf("ok: %s (version=%s functions=%d notifications=%d buckets=%d)\n",
 		cfgPath, cfg.Version, len(cfg.Functions), len(cfg.Notifications), len(cfg.Buckets))
 	return 0
+}
+
+func runPlan(args []string) int {
+	fs := flag.NewFlagSet("plan", flag.ContinueOnError)
+	configFlag := fs.String("config", "", "path to gcp-relay config")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	cfg, cfgPath, _, ok := loadConfig(*configFlag)
+	if !ok {
+		return 1
+	}
+	if err := cfg.ValidateSources(); err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		return 1
+	}
+
+	// Collect every topic the bootstrap would create, dedup'd.
+	topics := map[string]string{compose.FirehoseTopic: "firehose"}
+	for _, t := range cfg.PubSub.Topics {
+		topics[t.Name] = "declared"
+	}
+	for _, n := range cfg.Notifications {
+		if _, ok := topics[n.Topic]; !ok {
+			topics[n.Topic] = "notification target"
+		}
+	}
+	for _, f := range cfg.Functions {
+		if f.Trigger.Topic != "" {
+			if _, ok := topics[f.Trigger.Topic]; !ok {
+				topics[f.Trigger.Topic] = "function trigger"
+			}
+		}
+	}
+
+	fmt.Printf("plan from %s\n", cfgPath)
+	fmt.Printf("  project: %s\n\n", cfg.ProjectID)
+
+	if len(cfg.Buckets) > 0 {
+		fmt.Println("buckets:")
+		for _, b := range cfg.Buckets {
+			extras := ""
+			if b.Versioning {
+				extras = " (versioning)"
+			}
+			fmt.Printf("  + %s%s\n", b.Name, extras)
+			for _, sd := range b.Seed {
+				fmt.Printf("      seed: %s <- %s\n", sd.Object, sd.From)
+			}
+		}
+		fmt.Println()
+	}
+
+	if len(cfg.Notifications) > 0 {
+		fmt.Println("notifications (GCS bucket -> Pub/Sub topic):")
+		for _, n := range cfg.Notifications {
+			prefix := ""
+			if n.ObjectNamePrefix != "" {
+				prefix = " prefix=" + n.ObjectNamePrefix
+			}
+			fmt.Printf("  + %s -> %s  [%s]%s\n", n.Bucket, n.Topic, strings.Join(n.EventTypes, ","), prefix)
+		}
+		fmt.Println()
+	}
+
+	if len(cfg.Functions) > 0 {
+		fmt.Println("functions:")
+		for _, f := range cfg.Functions {
+			tag := "url=" + f.TargetURL()
+			if f.Source != "" {
+				tag = fmt.Sprintf("runtime=%s source=%s entry=%s", f.Runtime, f.Source, f.EntryPoint)
+			}
+			fmt.Printf("  + %-20s %s\n", f.Name, tag)
+			fmt.Printf("      trigger: %s\n", describeTrigger(f.Trigger))
+		}
+		fmt.Println()
+	}
+
+	fmt.Printf("topics (%d):\n", len(topics))
+	names := make([]string, 0, len(topics))
+	for n := range topics {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		fmt.Printf("  + %-24s (%s)\n", n, topics[n])
+	}
+	return 0
+}
+
+func describeTrigger(t config.FunctionTrigger) string {
+	switch {
+	case t.HTTP:
+		return "http"
+	case t.Topic != "":
+		return "topic=" + t.Topic
+	case t.EventFilters != nil:
+		s := "event_filters{type=" + t.EventFilters.Type
+		if t.EventFilters.Bucket != "" {
+			s += " bucket=" + t.EventFilters.Bucket
+		}
+		if t.EventFilters.ObjectNamePrefix != "" {
+			s += " prefix=" + t.EventFilters.ObjectNamePrefix
+		}
+		return s + "}"
+	default:
+		return "(none)"
+	}
+}
+
+func runLogs(args []string) int {
+	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
+	configFlag := fs.String("config", "", "path to gcp-relay config")
+	follow := fs.Bool("follow", false, "follow log output")
+	fs.BoolVar(follow, "f", false, "follow log output (shorthand)")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "usage: gcp-relay logs <function> [--follow]")
+		return 1
+	}
+	fnName := fs.Arg(0)
+
+	cfgPath := resolveConfigPath(*configFlag)
+	abs, err := filepath.Abs(cfgPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		return 1
+	}
+	dir := filepath.Dir(abs)
+	genPath := filepath.Join(dir, ".gcp-relay", "docker-compose.generated.yml")
+	if _, err := os.Stat(genPath); err != nil {
+		fmt.Fprintln(os.Stderr, "no generated compose found; run `gcp-relay up` first")
+		return 1
+	}
+	composeArgs := []string{"compose", "-f", genPath, "logs"}
+	if *follow {
+		composeArgs = append(composeArgs, "-f")
+	}
+	composeArgs = append(composeArgs, fnName)
+	return dockerCompose(dir, composeArgs...)
 }
 
 func runInit(args []string) int {
