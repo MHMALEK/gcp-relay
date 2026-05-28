@@ -1,14 +1,26 @@
-version: v1
+version: v2
 project_id: local-project
 
-triggers:
-  - name: gcs-object-finalize
-    source: pubsub
+# GCS buckets to create on bootstrap.
+buckets:
+  - name: demo-bucket
+
+# GCS bucket notifications (mirrors `gsutil notification create`):
+# object events on a bucket are published to a Pub/Sub topic.
+notifications:
+  - bucket: demo-bucket
     topic: gcs-notifications
-    filters:
-      event_type: google.cloud.storage.object.v1.finalized
-      # object_prefix: uploads/
-    targets:
-      - type: cloudevent
-        url: http://echo-function:8080
-        method: POST
+    event_types: [OBJECT_FINALIZE]
+    object_name_prefix: uploads/
+    payload_format: JSON_API_V1
+
+# Cloud Functions (mirrors `gcloud functions deploy`). The echo-function below
+# is already running in the compose stack, so it uses an explicit `url:`
+# instead of `source:`. Source-based functions are run by gcp-relay itself.
+functions:
+  - name: echo-function
+    url: http://echo-function:8080
+    trigger:
+      event_filters:
+        type: google.cloud.storage.object.v1.finalized
+        bucket: demo-bucket

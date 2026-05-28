@@ -3,47 +3,43 @@ package targets
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/MHMALEK/gcp-relay/internal/cloudevents"
-	"github.com/MHMALEK/gcp-relay/internal/config"
 )
 
-func Deliver(ctx context.Context, client *http.Client, target config.Target, event cloudevents.Envelope, bucket, objectName string) error {
-	switch strings.ToLower(target.Type) {
-	case "", "cloudevent", "cloud_function", "http":
-		return deliverCloudEvent(ctx, client, target, event)
-	default:
-		return fmt.Errorf("unknown target type %q", target.Type)
-	}
-}
-
-func deliverCloudEvent(ctx context.Context, client *http.Client, target config.Target, event cloudevents.Envelope) error {
-	payload, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
-
-	method := target.Method
+// DeliverCloudEvent POSTs a CloudEvent in HTTP binary content mode, matching
+// what real Eventarc delivers to Cloud Run / Cloud Functions 2nd gen: the
+// body is just the `data` payload, with envelope metadata in `Ce-*` headers.
+// Mixing binary and structured modes confuses some Functions Framework
+// implementations (Node treats Ce-* presence as binary mode and reads the
+// body as data — so a structured envelope ends up with `data` nested twice).
+func DeliverCloudEvent(ctx context.Context, client *http.Client, url, method string, event cloudevents.Envelope) error {
 	if method == "" {
 		method = http.MethodPost
 	}
+	body := []byte(event.Data)
 
-	req, err := http.NewRequestWithContext(ctx, method, target.URL, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 
-	req.Header.Set("Content-Type", "application/cloudevents+json")
+	contentType := event.DataContentType
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Ce-Specversion", event.SpecVersion)
 	req.Header.Set("Ce-Id", event.ID)
 	req.Header.Set("Ce-Source", event.Source)
 	req.Header.Set("Ce-Type", event.Type)
-	req.Header.Set("Ce-Specversion", event.SpecVersion)
 	req.Header.Set("Ce-Time", event.Time)
+	if event.Subject != "" {
+		req.Header.Set("Ce-Subject", event.Subject)
+	}
 
 	return roundTrip(client, req)
 }

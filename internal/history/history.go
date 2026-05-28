@@ -10,23 +10,23 @@ import (
 const defaultMaxRecords = 200
 
 type Delivery struct {
-	Trigger   string `json:"trigger"`
-	TargetURL string `json:"target_url"`
+	Trigger    string `json:"trigger"`
+	TargetURL  string `json:"target_url"`
 	TargetType string `json:"target_type"`
-	Status    string `json:"status"`
-	Error     string `json:"error,omitempty"`
+	Status     string `json:"status"`
+	Error      string `json:"error,omitempty"`
 }
 
 type Record struct {
-	ID        string                 `json:"id"`
-	Timestamp time.Time              `json:"timestamp"`
-	Source    string                 `json:"source"`
-	Topic     string                 `json:"topic,omitempty"`
-	Bucket    string                 `json:"bucket"`
-	Object    string                 `json:"object"`
-	EventType string                 `json:"event_type"`
-	Event     cloudevents.Envelope   `json:"event"`
-	Deliveries []Delivery            `json:"deliveries"`
+	ID         string               `json:"id"`
+	Timestamp  time.Time            `json:"timestamp"`
+	Source     string               `json:"source"`
+	Topic      string               `json:"topic,omitempty"`
+	Bucket     string               `json:"bucket"`
+	Object     string               `json:"object"`
+	EventType  string               `json:"event_type"`
+	Event      cloudevents.Envelope `json:"event"`
+	Deliveries []Delivery           `json:"deliveries"`
 }
 
 type Store struct {

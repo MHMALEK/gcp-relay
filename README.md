@@ -1,65 +1,116 @@
 # gcp-relay
 
-**Local GCP event pipeline emulator.** Relay GCS object notifications and Pub/Sub messages to local Cloud Function targets as CloudEvents — without touching production Eventarc or deployed functions.
+**Local GCP event pipeline emulator + Cloud Functions runner.** Declare your
+GCS buckets, Pub/Sub topics, bucket notifications, and Cloud Functions in one
+GCP-faithful YAML; `gcp-relay up` brings it all up as Docker containers and
+fires real CloudEvents at your functions running in the **real Functions
+Framework** (Python, Node, Go) — without touching production Eventarc.
 
-Compose [fake-gcs-server](https://github.com/fsouza/fake-gcs-server), the Pub/Sub emulator, and a small event router into one dev stack.
+```
+GCS upload → fake-gcs (firehose) → Pub/Sub emulator → relay (local Eventarc)
+                                                       ├─► your Python function
+                                                       ├─► your Node function
+                                                       └─► your Go function
+```
 
 ## Why gcp-relay?
 
-Google ships fragmented emulators (Pub/Sub, Firestore, …) but not a unified **upload → notification → function** path. gcp-relay fills that gap:
-
-```
-GCS upload → Pub/Sub topic → gcp-relay → local Cloud Function (Functions Framework)
-```
+Google ships fragmented emulators (Pub/Sub, Firestore, …) but not the **upload
+→ notification → function** glue. gcp-relay fills that gap with a single
+config-driven stack: declare resources the way you'd declare them with
+`gsutil notification create` and `gcloud functions deploy`, point your app at
+the emulators, and the same CloudEvent your production handler would see
+arrives locally.
 
 ## Quick start
 
-**Prerequisites:** Docker, Docker Compose, Go 1.22+ (optional, for native CLI)
-
-### One command
+**Prerequisites:** Docker + Docker Compose.
 
 ```bash
 git clone git@github.com:MHMALEK/gcp-relay.git
-cd gcp-relay
-go run ./cmd/gcp-relay up --build
-go run ./cmd/gcp-relay demo
+cd gcp-relay/examples
+gcp-relay up                   # generates compose, starts the stack, bootstraps
+# upload a file — both Python and Node sample functions log the event
+curl -X POST "http://localhost:4443/upload/storage/v1/b/uploads-bucket/o?uploadType=media&name=incoming/hello.txt" \
+  -H "Content-Type: text/plain" --data-binary "hello"
+gcp-relay logs python-hello    # tail a function's logs
+gcp-relay down                 # tear it all down
 ```
 
-Open the inspector: **http://localhost:8099/ui/**
-
-### Manual
-
-```bash
-docker compose up --build -d
-go run ./cmd/gcp-relay init
-go run ./cmd/gcp-relay demo
-```
+Inspector: **http://localhost:8099/ui/**
 
 ## CLI
 
 | Command | Description |
 |---------|-------------|
-| `gcp-relay up [--build]` | Start stack + bootstrap Pub/Sub/GCS |
-| `gcp-relay down` | Stop stack |
-| `gcp-relay init` | Create topic, push subscription, bucket notification |
-| `gcp-relay demo` | Upload demo file to local GCS |
-| `gcp-relay serve` | Run relay only (native) |
+| `gcp-relay up [--config path] [--build]` | Generate compose, start stack, bootstrap |
+| `gcp-relay down [--config path]` | Stop the generated stack |
+| `gcp-relay validate [--config path]` | Validate the config (incl. function sources) |
+| `gcp-relay init [--config path]` | Bootstrap against an already-running stack |
+| `gcp-relay demo` | Upload a demo file to local GCS |
+| `gcp-relay serve` | Run the relay only (native) |
+| `gcp-relay version` | Print the version |
 
-Install locally:
+### Install
+
+Download a prebuilt binary from the [GitHub Releases](https://github.com/MHMALEK/gcp-relay/releases) (linux/macOS, amd64/arm64), or:
 
 ```bash
-go install ./cmd/gcp-relay
-gcp-relay up --build
+go install github.com/MHMALEK/gcp-relay/cmd/gcp-relay@latest
+gcp-relay up
+```
+
+### Host port overrides
+
+If the default ports clash with other local containers, override them:
+
+```bash
+export GCP_RELAY_HOST_PUBSUB_PORT=18085
+export GCP_RELAY_HOST_GCS_PORT=14443
+export GCP_RELAY_HOST_RELAY_PORT=18099
+gcp-relay up
 ```
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    subgraph App["Your app (any GCP client)"]
+      U["GCS client<br/>STORAGE_EMULATOR_HOST<br/>= http://gcs.localhost:4443"]
+    end
+
+    subgraph Stack["gcp-relay Docker network (gcp-relay)"]
+      GCS["fake-gcs-server<br/>firehose: all buckets,<br/>all event types"]
+      PS["Pub/Sub emulator<br/>topic: gcs-firehose"]
+      R["relay<br/>local Eventarc +<br/>notification engine +<br/>inspector UI"]
+      FP["python runtime<br/>functions-framework"]
+      FN["node runtime<br/>functions-framework"]
+      FG["go runtime<br/>funcframework"]
+      NT["notification topics<br/>(per gsutil rule)"]
+      PUSH["your own push subs<br/>(pubsub.subscriptions)"]
+    end
+
+    U -- "object upload" --> GCS
+    GCS -- "OBJECT_FINALIZE /<br/>DELETE / ARCHIVE /<br/>METADATA_UPDATE" --> PS
+    PS -- "push" --> R
+    R -- "google.cloud.storage.object.v1.*<br/>CloudEvent (binary mode)" --> FP
+    R -- " " --> FN
+    R -- " " --> FG
+    R -- "republish for<br/>each matching<br/>notification rule" --> NT
+    NT -- "push" --> PUSH
+    NT -- "push -> wrap as<br/>messagePublished" --> R
+```
+
 | Service | Port | Role |
 |---------|------|------|
-| `gcs` | 4443 | fake-gcs-server (GCS API + object notifications) |
-| `pubsub` | 8085 | Pub/Sub emulator (built from `docker/pubsub`) |
-| `relay` | 8099 | Event router + inspector UI |
-| `echo-function` | 8080 | Example Functions Framework target |
+| `gcs` | 4443 | fake-gcs-server with all-buckets firehose notifications |
+| `pubsub` | 8085 | Google Pub/Sub emulator |
+| `relay` | 8099 | Local Eventarc: routes the firehose to functions, republishes to notification topics, translates Pub/Sub pushes into `messagePublished` CloudEvents, inspector UI |
+| `<function-name>` | auto | One Functions Framework runner per source-based function in your config (Python / Node / Go) |
+
+fake-gcs runs in **firehose mode** — every bucket's object events publish to
+one `gcs-firehose` topic. The relay receives that single push and does all
+fan-out from your config, so there's no per-bucket emulator wiring.
 
 ## Container images
 
@@ -69,10 +120,23 @@ Prebuilt images are published to GHCR on every push to the default branch and on
 |-------|---------|
 | `ghcr.io/mhmalek/gcp-relay` | The relay binary (entrypoint `gcp-relay serve`) |
 | `ghcr.io/mhmalek/gcp-relay-pubsub` | Pub/Sub emulator container used in the compose stack |
+| `ghcr.io/mhmalek/gcp-relay-runtime-python` | Python Functions Framework runner |
+| `ghcr.io/mhmalek/gcp-relay-runtime-node` | Node.js Functions Framework runner |
+| `ghcr.io/mhmalek/gcp-relay-runtime-go` | Go Functions Framework runner |
 
 Tags: `:main` (rolling default branch), `:sha-<short>`, `:vX.Y.Z`, `:vX.Y`, `:latest` (latest tagged release).
 
 Consumers should pin to a `:vX.Y.Z` tag.
+
+### Releasing
+
+Releases are cut by pushing a semver tag:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+That triggers two parallel workflows: [`release.yml`](.github/workflows/release.yml) runs `goreleaser` to publish multi-platform binaries + a GitHub release, and [`publish-images.yml`](.github/workflows/publish-images.yml) builds the four container images to GHCR.
 
 ## Configuration
 
@@ -80,32 +144,52 @@ Consumers should pin to a `:vX.Y.Z` tag.
 cp config/triggers.example.yaml config/triggers.yaml
 ```
 
-The `triggers.yaml` schema is the **stable public contract** for downstream consumers. It is versioned:
+The config mirrors **real GCP resources** — buckets, Pub/Sub topics/subscriptions,
+GCS bucket notifications, and Cloud Functions — so it maps 1:1 to what you'd
+declare with `gsutil notification create` and `gcloud functions deploy`:
 
 ```yaml
-version: v1            # optional; defaults to v1 for back-compat. Unknown versions are rejected.
+version: v2
 project_id: local-project
 
-triggers:
-  - name: gcs-object-finalize
-    source: pubsub
+buckets:
+  - name: demo-bucket
+    versioning: true
+
+# GCS → Pub/Sub (mirrors `gsutil notification create`)
+notifications:
+  - bucket: demo-bucket
     topic: gcs-notifications
-    filters:
-      event_type: google.cloud.storage.object.v1.finalized
-      object_prefix: uploads/
-    targets:
-      - type: cloudevent
-        url: http://echo-function:8080
+    event_types: [OBJECT_FINALIZE, OBJECT_DELETE]
+    object_name_prefix: uploads/
+    payload_format: JSON_API_V1
+
+# GCS / Pub/Sub → Cloud Function (mirrors `gcloud functions deploy`)
+functions:
+  - name: echo-function
+    url: http://echo-function:8080      # already-running target; use `source:` to have gcp-relay run it
+    trigger:
+      event_filters:
+        type: google.cloud.storage.object.v1.finalized
+        bucket: demo-bucket
 ```
 
-Breaking changes to the schema bump the version (e.g. `v2`). Older versions remain supported.
+How it routes: fake-gcs publishes **every** bucket's object events to one
+firehose topic; the relay acts as local Eventarc, delivering a faithful
+`google.cloud.storage.object.v1.*` CloudEvent to each function whose
+`event_filters` match, and republishing to any matching notification topic.
 
-### Target types
+**Versioning:** `version` is optional and auto-detected (legacy `triggers:` ⇒
+`v1`, otherwise `v2`). Old `v1` trigger configs still load and are normalized
+internally. Unknown versions are rejected.
 
-| `type` | Delivers |
-|--------|----------|
-| `cloudevent` (default) | CloudEvents JSON + `Ce-*` headers to a Functions Framework URL |
-| `http` | Same as `cloudevent` — raw HTTP POST with CloudEvent payload |
+### Function triggers
+
+| `trigger` | Fires on |
+|-----------|----------|
+| `event_filters: {type, bucket, object_name_prefix}` | a GCS object event (Eventarc-style) |
+| `topic: <name>` | a Pub/Sub message on that topic (delivered as `messagePublished`) |
+| `http: true` | a plain HTTP request |
 
 ### Manual GCS event (bypass Pub/Sub)
 
@@ -137,24 +221,94 @@ All fields are optional and fall back to the relay's defaults (`GCP_RELAY_PROJEC
 - **UI:** http://localhost:8099/ui/
 - **API:** `GET /events`, `GET /events/{id}`, `POST /events/{id}/replay`
 
-## SDK / client setup
+## Pointing your app at the emulators
+
+A presets file lives at [`deploy/env.emulator`](deploy/env.emulator) — source
+it (or pass the same vars to `docker run -e ...`) and any GCP client library
+talks to the local stack:
 
 ```bash
-export STORAGE_EMULATOR_HOST=http://localhost:4443
-export PUBSUB_EMULATOR_HOST=localhost:8085
-export GCP_RELAY_URL=http://localhost:8099
-# Pub/Sub emulator runs in Docker — push subscriptions must reach the host relay:
-export GCP_RELAY_PUSH_URL=http://host.docker.internal:8099
+set -a && . deploy/env.emulator && set +a
+# STORAGE_EMULATOR_HOST=http://gcs.localhost:4443
+# PUBSUB_EMULATOR_HOST=pubsub.localhost:8085
+# GOOGLE_CLOUD_PROJECT=local-project
 ```
+
+The canonical hostnames `gcs.localhost` / `pubsub.localhost` resolve via the
+Docker network alias for any container on the `gcp-relay` network. For
+apps running directly on your host, either:
+
+- use `localhost:<published port>` (works with no setup), or
+- add a one-time line to `/etc/hosts`:
+  `127.0.0.1  gcs.localhost pubsub.localhost`
+
+### Per-language auth
+
+The env var honoring is consistent across Go/Python; Node and Java need an
+extra knob:
+
+| Client | What's needed | Code change |
+|---|---|---|
+| **Go** (`cloud.google.com/go/storage`) | `STORAGE_EMULATOR_HOST` only — auto-reroutes and skips auth | none |
+| **Python** (`google-cloud-storage`) | `STORAGE_EMULATOR_HOST` only — auto-reroutes + anonymous creds | none |
+| **Node** (`@google-cloud/storage`) | env var **+** `new Storage({ apiEndpoint, useAuthWithCustomEndpoint: false })` | one option |
+| **Java** | `StorageOptions.newBuilder().setHost("http://gcs.localhost:4443").setCredentials(NoCredentials.getInstance()).build()` | a few lines |
+
+If a client still falls through Application Default Credentials and complains, run a one-time `gcloud auth application-default login` — the emulators never read those credentials, but ADC stops failing.
+
+## Standalone use (no CLI)
+
+If you'd rather run gcp-relay's emulators in your own compose stack and
+manage function services yourself, use the standalone stack at
+[`deploy/docker-compose.yml`](deploy/docker-compose.yml). The relay
+self-bootstraps from its config via `GCP_RELAY_AUTO_BOOTSTRAP=true`:
+
+```bash
+GCP_RELAY_CONFIG_HOST_PATH=$PWD/gcp-relay.yaml \
+  docker compose -f deploy/docker-compose.yml up
+```
+
+Cross-stack apps attach to the shared network by adding this to their
+compose:
+
+```yaml
+networks:
+  gcp-relay:
+    external: true
+```
+
+…and pointing clients at `gcs.localhost:4443` / `pubsub.localhost:8085`.
 
 ## Roadmap
 
-- [x] `gcp-relay up` orchestration
+Shipped in v0.1:
+
+- [x] `gcp-relay up` orchestration (config-driven compose generation)
 - [x] Event inspector UI + replay API
-- [x] Object prefix filters
-- [ ] Eventarc-compatible trigger CRUD API
-- [ ] Pub/Sub emulator wiring for non-GCS functions
-- [ ] Single static binary bundling emulators (no Docker)
+- [x] GCP-faithful v2 schema (buckets / pubsub / notifications / functions)
+- [x] Functions Framework runners for Python, Node, and Go
+- [x] Eventarc-style routing + GCS bucket-notification republishing
+- [x] Pub/Sub topic-triggered functions (messagePublished CloudEvents)
+- [x] Multi-platform binary releases + GHCR images for every component
+
+Next (v0.2):
+
+- [ ] **DockerLauncher** — relay launches function containers via the Docker
+      socket so `docker compose up` works without the gcp-relay CLI
+- [ ] **Full end-to-end CI verification** — exercise the whole upload → relay
+      → function chain on alternate ports during CI
+- [ ] `gcp-relay deploy` to push a built function to a real GCF project
+      from the same config
+- [ ] **Terraform** support via the `google` provider with custom endpoints
+      (buckets / topics / subscriptions / notifications)
+
+Stretch (v0.3+):
+
+- [ ] **Cloud Functions Admin API shim** so `google_cloudfunctions2_function`
+      can `terraform apply` against gcp-relay — "the whole pipeline from
+      one `.tf`"
+- [ ] Single static binary bundling the emulators (Pub/Sub emulator is a
+      JVM app, so this stays speculative)
 
 ## License
 

@@ -40,12 +40,12 @@ func TestAdminBootstrapAgainstFakeAPIs(t *testing.T) {
 	defer gcs.Close()
 
 	body, _ := json.Marshal(map[string]string{
-		"project_id":   "test-project",
-		"topic":        "test-topic",
-		"bucket":       "test-bucket",
-		"push_url":     "http://relay:8099",
-		"pubsub_host":  strings.TrimPrefix(pubsub.URL, "http://"),
-		"gcs_host":     gcs.URL,
+		"project_id":  "test-project",
+		"topic":       "test-topic",
+		"bucket":      "test-bucket",
+		"push_url":    "http://relay:8099",
+		"pubsub_host": strings.TrimPrefix(pubsub.URL, "http://"),
+		"gcs_host":    gcs.URL,
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/bootstrap", bytes.NewReader(body))
